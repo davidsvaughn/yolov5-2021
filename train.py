@@ -338,8 +338,9 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                 elif plots and ni == 10 and wandb:
                     wandb.log({"Mosaics": [wandb.Image(str(x), caption=x.name) for x in save_dir.glob('train*.jpg')
                                            if x.exists()]}, commit=False)
-
             # end batch ------------------------------------------------------------------------------------------------
+        ## fix slowdown problem? 
+        torch.cuda.empty_cache()
         # end epoch ----------------------------------------------------------------------------------------------------
 
         # Scheduler
