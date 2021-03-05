@@ -339,7 +339,8 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                     wandb.log({"Mosaics": [wandb.Image(str(x), caption=x.name) for x in save_dir.glob('train*.jpg')
                                            if x.exists()]}, commit=False)
             # end batch ------------------------------------------------------------------------------------------------
-        ## fix slowdown problem? 
+        ## fix slowdown problem?
+        print('{0:0.2f} min'.format((time.time() - t1) / 60))
         torch.cuda.empty_cache()
         # end epoch ----------------------------------------------------------------------------------------------------
 
