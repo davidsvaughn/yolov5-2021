@@ -342,6 +342,9 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
             logger.info('\tepoch completed in %.2f min.\n' % ((time.time() - t1) / 60))
             t1 = time.time()
         torch.cuda.empty_cache()
+        if rank in [-1, 0]:
+            logger.info('\tempty cuda cache took %.2f sec.\n' % ((time.time() - t1)))
+
         # end epoch ----------------------------------------------------------------------------------------------------
 
         # Scheduler
