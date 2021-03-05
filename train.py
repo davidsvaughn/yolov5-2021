@@ -340,7 +340,9 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                                            if x.exists()]}, commit=False)
             # end batch ------------------------------------------------------------------------------------------------
         ## fix slowdown problem?
-        print('{0:0.2f} min'.format((time.time() - t1) / 60))
+        if rank in [-1, 0]:
+            logger.info('\tepoch completed in %.2f min.\n' % ((time.time() - t1) / 60))
+            # print('{0:0.2f} min'.format((time.time() - t1) / 60))
         torch.cuda.empty_cache()
         # end epoch ----------------------------------------------------------------------------------------------------
 
