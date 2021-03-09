@@ -9,6 +9,9 @@ import torch
 import yaml
 from tqdm import tqdm
 
+# from skopt.sampler import Lhs
+# from skopt.space import Space
+
 from models.experimental import attempt_load
 from utils.datasets import create_dataloader
 from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, check_requirements, \
@@ -91,12 +94,27 @@ def test(data,
 
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
-    names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
+    names = data['names']#{k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
     coco91class = coco80_to_coco91_class()
     s = ('%30s' + '%12s' * 7) % ('Class', 'Images', 'Targets', 'P', 'R', 'F1', 'mAP@.5', 'mAP@.5:.95')
     p, r, f1, mp, mr, map50, map, t0, t1, mf1 = 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
+
+    ## NMS parameter sweep.................. ##
+    # nms_samples = 0
+    # nms_new = False ## params sweep parameter
+    # nms_samples = 25
+    # space = Space([(0., 0.8), (-0.8, 0.8)])
+
+    # if nms_samples>0:
+    #     lhs = Lhs(criterion="correlation", iterations=1000)
+    #     nms_params = lhs.generate(space.dimensions, nms_samples)
+    #     nms_stats = [[] for _ in range(nms_samples)]
+    #     print('\n\nCLASS NAMES:\n{}\n\n'.format(names).replace(',','\n'))
+
+    ## ..................NMS parameter sweep ##
+
     for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
         img = img.to(device, non_blocking=True)
         img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -107,7 +125,7 @@ def test(data,
         with torch.no_grad():
             # Run model
             t = time_synchronized()
-            out, train_out = model(img, augment=augment)  # inference and training outputs
+            inf_out, train_out = model(img, augment=augment)  # inference and training outputs
             t0 += time_synchronized() - t
 
             # Compute loss
@@ -118,11 +136,22 @@ def test(data,
             targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
             lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
             t = time_synchronized()
-            out = non_max_suppression(out, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True)
+            output = non_max_suppression(inf_out, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True)
             t1 += time_synchronized() - t
 
+            # ## NMS parameter sweep ##
+            # if nms_samples>0:
+            #     outputs = []
+            #     for x in nms_params:
+            #         conf, iou = x[0], x[1]
+            #         # classes=None
+            #         # iou = -iou if nms_new else iou ## signal to use new NMS (on classes)
+            #         out = non_max_suppression(inf_out, conf_thres=conf, iou_thres=iou, labels=lb, multi_label=True)#, names=names)
+            #         outputs.append(out)
+            # ## ...NMS sweep ##
+
         # Statistics per image
-        for si, pred in enumerate(out):
+        for si, pred in enumerate(output):
             labels = targets[targets[:, 0] == si, 1:]
             nl = len(labels)
             tcls = labels[:, 0].tolist() if nl else []  # target class
@@ -183,8 +212,8 @@ def test(data,
 
                 # Per target class
                 for cls in torch.unique(tcls_tensor):
-                    ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1)  # prediction indices
-                    pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # target indices
+                    ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1) # target indices
+                    pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # prediction indices
 
                     # Search for detections
                     if pi.shape[0]:
@@ -210,20 +239,72 @@ def test(data,
             f = save_dir / f'test_batch{batch_i}_labels.jpg'  # labels
             Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
             f = save_dir / f'test_batch{batch_i}_pred.jpg'  # predictions
-            Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
+            Thread(target=plot_images, args=(img, output_to_target(output), paths, f, names), daemon=True).start()
+
+        # ## NMS parameter sweep : stats ##
+        # print('')
+        # if nms_samples>0:
+        #     for hi, output in enumerate(outputs):
+        #         # Statistics per image
+        #         for si, pred in enumerate(output):
+        #             labels = targets[targets[:, 0] == si, 1:]
+        #             nl = len(labels)
+        #             tcls = labels[:, 0].tolist() if nl else []  # target class
+        #             path = Path(paths[si])
+        #             # seen += 1
+
+        #             if len(pred) == 0:
+        #                 if nl:
+        #                     stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
+        #                 continue
+
+        #             # Predictions
+        #             predn = pred.clone()
+        #             scale_coords(img[si].shape[1:], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
+
+        #             # Assign all predictions as incorrect
+        #             correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
+        #             if nl:
+        #                 detected = []  # target indices
+        #                 tcls_tensor = labels[:, 0]
+
+        #                 # target boxes
+        #                 tbox = xywh2xyxy(labels[:, 1:5])
+        #                 scale_coords(img[si].shape[1:], tbox, shapes[si][0], shapes[si][1])  # native-space labels
+
+        #                 # Per target class
+        #                 for cls in torch.unique(tcls_tensor):
+        #                     ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1) # target indices
+        #                     pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # prediction indices
+
+        #                     # Search for detections
+        #                     if pi.shape[0]:
+        #                         # Prediction to target ious
+        #                         ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1)  # best ious, indices
+        #                         # Append detections
+        #                         detected_set = set()
+        #                         for j in (ious > iouv[0]).nonzero(as_tuple=False):
+        #                             d = ti[i[j]]  # detected target
+        #                             if d.item() not in detected_set:
+        #                                 detected_set.add(d.item())
+        #                                 detected.append(d)
+        #                                 correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
+        #                                 if len(detected) == nl:  # all targets already located in image
+        #                                     break
+
+        #             # Append statistics (correct, conf, pcls, tcls)
+        #             nms_stats[hi].append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
+        # ## ...NMS sweep ##
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
     if len(stats) and stats[0].any():
-        p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
-        ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
-        nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
-        wt = nt[ap_class]
-        mp, mr, map50, map, mf1 = np.average(p, weights=wt), np.average(r, weights=wt), np.average(ap50, weights=wt), ap.mean(), np.average(f1, weights=wt)
+        mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
     else:
         nt = torch.zeros(1)
 
     # Print results
+    print('Optimal Confidence Threshold: {0:0.3f}'.format(conf_best))
     pf = '%30s' + '%12.3g' * 7  # print format
     print(pf % ('all', seen, nt.sum(), mp, mr, mf1, map50, map))
 
@@ -232,6 +313,51 @@ def test(data,
         for i, c in enumerate(ap_class):
             print(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i]))
 
+    ## helper for finding best NMS params....
+    def update(k,V,P,v,p):
+        if v > V[k]:
+            V[k] = v
+            P[k] = p
+    
+    # ## NMS parameter sweep : results ##
+    # if nms_samples>0:
+    #     ## initialize best parameter dict
+    #     f1_best = { names[c]:-1 for c in ap_class }
+    #     x_best = { names[c]:None for c in ap_class }
+    #     f1_best['all'], x_best['all'] = 0,None
+    #     for hi, stat in enumerate(nms_stats):
+    #         x = np.array(nms_params[hi])
+    #         conf, iou = x[0], x[1]
+    #         # Compute statistics
+    #         stat = [np.concatenate(x, 0) for x in zip(*stat)]  # to numpy
+    #         if len(stat) and stat[0].any():
+    #             mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stat, plot=False)
+    #             x[0] = conf_best
+    #             update('all', f1_best, x_best, mf1, x)
+    #             if (verbose or (nc <= 20 and not training)) and nc > 1 and len(stats):
+    #                 for i, c in enumerate(ap_class):
+    #                     x[0] = cc[i]
+    #                     update(names[c], f1_best, x_best, f1[i], x)
+
+    #     print('NMS_BEST\tf1\tconf\tiou')
+    #     keys, confs, ious = [],[],[]
+    #     for k in f1_best.keys():
+    #         print('{0} \t{1:0.2f}\t{2:0.3f}\t{3:0.3f}'.format(k, f1_best[k], x_best[k][0], x_best[k][1]))
+    #         keys.append(k)
+    #         confs.append(x_best[k].round(3)[0])
+    #         ious.append(x_best[k].round(3)[1])
+    #     print(keys[:-1])
+    #     print(confs[:-1])
+    #     print(ious[:-1])
+
+    #     print(ap_class)
+    #     print(nt)
+
+    #     print('{0} \t{1:0.3f}\t{2:0.3f}'.format(keys[-1], confs[-1], ious[-1]))
+
+    #     print('\n')
+    # ## ...NMS sweep ##
+
     # Print speeds
     t = tuple(x / seen * 1E3 for x in (t0, t1, t0 + t1)) + (imgsz, imgsz, batch_size)  # tuple
     if not training:
@@ -239,7 +365,7 @@ def test(data,
 
     # Plots
     if plots:
-        confusion_matrix.plot(save_dir=save_dir, names=list(names.values()))
+        confusion_matrix.plot(save_dir=save_dir, names=names)#list(names.values()))
         if wandb and wandb.run:
             val_batches = [wandb.Image(str(f), caption=f.name) for f in sorted(save_dir.glob('test*.jpg'))]
             wandb.log({"Images": wandb_images, "Validation": val_batches}, commit=False)

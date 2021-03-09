@@ -11,8 +11,9 @@ from . import general
 
 def fitness(x):
     # Model fitness as a weighted combination of metrics
-    w = [0.0, 0.0, 0.1, 0.9]  # weights for [P, R, mAP@0.5, mAP@0.5:0.95]
-    return (x[:, :4] * w).sum(1)
+    w = np.array([0., 0., 0., 1., 9.])  # weights for [P, R, F1, mAP@0.5, mAP@0.5:0.95]
+    w = w / w.sum()
+    return (x[:, :5] * w).sum(1)
 
 
 def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names=()):
@@ -36,6 +37,9 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
     # Find unique classes
     unique_classes = np.unique(target_cls)
     nc = unique_classes.shape[0]  # number of classes, number of detections
+
+    nt = np.bincount(target_cls.astype(np.int64), minlength=nc)  # number of targets per class
+    wt = nt[unique_classes.astype('int32')]
 
     # Create Precision-Recall curve and compute AP for each class
     px, py = np.linspace(0, 1, 1000), []  # for plotting
@@ -74,8 +78,22 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
         plot_mc_curve(px, p, Path(save_dir) / 'P_curve.png', names, ylabel='Precision')
         plot_mc_curve(px, r, Path(save_dir) / 'R_curve.png', names, ylabel='Recall')
 
-    i = f1.mean(0).argmax()  # max F1 index
-    return p[:, i], r[:, i], ap, f1[:, i], unique_classes.astype('int32')
+    i0 = f1.argmax(axis=1)
+    i1 = f1.mean(0).argmax()  # max F1 index, unweighted average (averaged over all classes)
+    i2 = np.average(f1, 0, weights=wt).argmax()# max F1 index, weighted average (by # targets per class)
+    i = (i1+i2)//2
+    conf_best = px[i]
+    ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
+    p, r, f1, ap_class = p[:, i], r[:, i], f1[:, i], unique_classes.astype('int32')
+
+    ## unweighted averages (across classes)...
+    mp_1, mr_1, map50_1, map_1, mf1_1 = p.mean(), r.mean(), ap50.mean(), ap.mean(), f1.mean()
+    ## weighted average (by # targets per class)...
+    mp_2, mr_2, map50_2, map_2, mf1_2 = np.average(p, weights=wt), np.average(r, weights=wt), np.average(ap50, weights=wt), np.average(ap, weights=wt), np.average(f1, weights=wt)\
+    ## average of weighted and unweighted means...
+    mp, mr, map50, map, mf1 = (mp_1+mp_2)/2, (mr_1+mr_2)/2, (map50_1+map50_2)/2, (map_1+map_2)/2, (mf1_1+mf1_2)/2
+
+    return mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, px[i0])
 
 
 def compute_ap(recall, precision):
