@@ -206,8 +206,6 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
             c = torch.tensor(labels[:, 0])  # classes
-            # cf = torch.bincount(c.long(), minlength=nc) + 1.  # frequency
-            # model._initialize_biases(cf.to(device))
             if plots:
                 plot_labels(labels, save_dir, loggers)
                 if tb_writer:
@@ -236,6 +234,24 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     scheduler.last_epoch = start_epoch - 1  # do not move
     scaler = amp.GradScaler(enabled=cuda)
     compute_loss = ComputeLoss(model)  # init loss class
+
+    ##########################################################################
+    if rank in [-1, 0]:  # check initial model performance....
+        results, _, _ = test.test(opt.data,
+                                        batch_size=batch_size,
+                                        imgsz=imgsz_test,
+                                        model=ema.ema,
+                                        single_cls=opt.single_cls,
+                                        dataloader=testloader,
+                                        save_dir=save_dir,
+                                        verbose=True,
+                                        plots=False,
+                                        log_imgs=opt.log_imgs if wandb else 0,
+                                        compute_loss=compute_loss)
+        logger.info('Initial Model Performance')
+        logger.info('%10.4g' * 5 % results[:5])
+    ##########################################################################
+
     logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
                 f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
