@@ -126,7 +126,6 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     if hyp.get('init_epochs'):
         init_epochs = hyp['init_epochs']
         lr_epochs += init_epochs
-        print('Stepping lr_scheduler forward {} epochs...'.format(init_epochs))
     if opt.linear_lr:
         lf = lambda x: (1 - x / (lr_epochs - 1)) * (1.0 - hyp['lrf']) + hyp['lrf']  # linear
     else:
@@ -243,6 +242,9 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     scaler = amp.GradScaler(enabled=cuda)
     compute_loss = ComputeLoss(model)  # init loss class
 
+    if init_epochs>0:
+        nw = -1
+        print('Stepping lr_scheduler forward {} epochs...'.format(init_epochs))
     for i in range(init_epochs-1):
         scheduler.step()
 
