@@ -126,6 +126,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     if hyp.get('init_epochs'):
         init_epochs = hyp['init_epochs']
         lr_epochs += init_epochs
+        print('Stepping lr_scheduler forward {} epochs...'.format(init_epochs))
     if opt.linear_lr:
         lf = lambda x: (1 - x / (lr_epochs - 1)) * (1.0 - hyp['lrf']) + hyp['lrf']  # linear
     else:
@@ -247,19 +248,17 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
 
     ##########################################################################
     if rank in [-1, 0]:  # check initial model performance....
-        results, _, _ = test.test(opt.data,
-                                        batch_size=test_batch_size,
-                                        imgsz=imgsz_test,
-                                        model=ema.ema,
-                                        single_cls=opt.single_cls,
-                                        dataloader=testloader,
-                                        save_dir=save_dir,
-                                        verbose=True,
-                                        plots=False,
-                                        log_imgs=opt.log_imgs if wandb else 0,
-                                        compute_loss=compute_loss)
-        logger.info('Initial Model Performance')
-        logger.info('%10.4g' * 5 % results[:5])
+        test.test(opt.data,
+                batch_size=test_batch_size,
+                imgsz=imgsz_test,
+                model=ema.ema,
+                single_cls=opt.single_cls,
+                dataloader=testloader,
+                save_dir=save_dir,
+                verbose=True,
+                plots=False,
+                log_imgs=opt.log_imgs if wandb else 0,
+                compute_loss=compute_loss)
     ##########################################################################
 
     logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
