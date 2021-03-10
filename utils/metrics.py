@@ -80,19 +80,21 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
 
     i0 = f1.argmax(axis=1)
     i1 = f1.mean(0).argmax()  # max F1 index, unweighted average (averaged over all classes)
-    i2 = np.average(f1, 0, weights=wt).argmax()# max F1 index, weighted average (by # targets per class)
-    i = (i1+i2)//2
+    # i2 = np.average(f1, 0, weights=wt).argmax()# max F1 index, weighted average (by # targets per class)
+    # i = (i1+i2)//2
+    i = i1
     conf_best = px[i]
     ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
     p, r, f1, ap_class = p[:, i], r[:, i], f1[:, i], unique_classes.astype('int32')
 
     ## unweighted averages (across classes)...
     mp_1, mr_1, map50_1, map_1, mf1_1 = p.mean(), r.mean(), ap50.mean(), ap.mean(), f1.mean()
-    ## weighted average (by # targets per class)...
-    mp_2, mr_2, map50_2, map_2, mf1_2 = np.average(p, weights=wt), np.average(r, weights=wt), np.average(ap50, weights=wt), np.average(ap, weights=wt), np.average(f1, weights=wt)\
-    ## average of weighted and unweighted means...
-    mp, mr, map50, map, mf1 = (mp_1+mp_2)/2, (mr_1+mr_2)/2, (map50_1+map50_2)/2, (map_1+map_2)/2, (mf1_1+mf1_2)/2
+    # ## weighted average (by # targets per class)...
+    # mp_2, mr_2, map50_2, map_2, mf1_2 = np.average(p, weights=wt), np.average(r, weights=wt), np.average(ap50, weights=wt), np.average(ap, weights=wt), np.average(f1, weights=wt)\
+    # ## average of weighted and unweighted means...
+    # mp, mr, map50, map, mf1 = (mp_1+mp_2)/2, (mr_1+mr_2)/2, (map50_1+map50_2)/2, (map_1+map_2)/2, (mf1_1+mf1_2)/2
 
+    mp, mr, map50, map, mf1 = mp_1, mr_1, map50_1, map_1, mf1_1
     return mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, px[i0])
 
 
