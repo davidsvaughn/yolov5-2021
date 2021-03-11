@@ -204,7 +204,8 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
 
     # Process 0
     if rank in [-1, 0]:
-        test_batch_size = batch_size# * 4
+        test_batch_size = batch_size
+        # test_batch_size *= 2
         testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
                                        hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
                                        world_size=opt.world_size, workers=opt.workers,
@@ -249,7 +250,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         scheduler.step()
 
     ##########################################################################
-    if rank in [-1, 0]:  # check initial model performance....
+    if init_epochs>0 and rank in [-1, 0]:  # check initial model performance....
         test.test(opt.data,
                 batch_size=test_batch_size,
                 imgsz=imgsz_test,
