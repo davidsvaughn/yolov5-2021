@@ -24,7 +24,7 @@ from utils.general import xyxy2xywh, xywh2xyxy, xywhn2xyxy, xyn2xy, segment2box,
     clean_str
 from utils.torch_utils import torch_distributed_zero_first
 
-DEBUG = True
+DEBUG = False
 
 # Parameters
 help_url = 'https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
