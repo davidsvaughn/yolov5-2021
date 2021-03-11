@@ -24,6 +24,8 @@ from utils.general import xyxy2xywh, xywh2xyxy, xywhn2xyxy, xyn2xy, segment2box,
     clean_str
 from utils.torch_utils import torch_distributed_zero_first
 
+DEBUG = True
+
 # Parameters
 help_url = 'https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
 img_formats = ['bmp', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'dng', 'webp']  # acceptable image suffixes
@@ -686,6 +688,9 @@ def load_mosaic(self, index):
             x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
             x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
 
+        if DEBUG:
+            print('\tload_image: {}'.format(img.shape))
+
         img4[y1a:y2a, x1a:x2a] = img[y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
         padw = x1a - x1b
         padh = y1a - y1b
@@ -712,6 +717,10 @@ def load_mosaic(self, index):
                                        shear=self.hyp['shear'],
                                        perspective=self.hyp['perspective'],
                                        border=self.mosaic_border)  # border to remove
+
+    if DEBUG:
+        print('mosaic: {}'.format(img4.shape))
+        print('labels: {}'.format(labels4.shape))
 
     return img4, labels4
 
