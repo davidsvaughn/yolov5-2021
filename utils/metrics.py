@@ -11,7 +11,7 @@ from . import general
 
 def fitness(x):
     # Model fitness as a weighted combination of metrics
-    w = np.array([0., 0., 0., 1., 9.])  # weights for [P, R, F1, mAP@0.5, mAP@0.5:0.95]
+    w = np.array([0., 0., 8., 0., 2.])  # weights for [P, R, F1, mAP@0.5, mAP@0.5:0.95]
     w = w / w.sum()
     return (x[:, :5] * w).sum(1)
 
@@ -78,7 +78,7 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
         plot_mc_curve(px, p, Path(save_dir) / 'P_curve.png', names, ylabel='Precision')
         plot_mc_curve(px, r, Path(save_dir) / 'R_curve.png', names, ylabel='Recall')
 
-    i0 = f1.argmax(axis=1)
+    i0 = f1.argmax(axis=1) # argmax_per_class
     i1 = f1.mean(0).argmax()  # max F1 index, unweighted average (averaged over all classes)
     # i2 = np.average(f1, 0, weights=wt).argmax()# max F1 index, weighted average (by # targets per class)
     # i = (i1+i2)//2

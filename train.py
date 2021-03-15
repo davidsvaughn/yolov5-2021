@@ -36,7 +36,6 @@ from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_di
 
 logger = logging.getLogger(__name__)
 
-
 def train(hyp, opt, device, tb_writer=None, wandb=None):
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
     save_dir, epochs, batch_size, total_batch_size, weights, rank = \
@@ -88,6 +87,9 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
 
     # Freeze
     freeze = []  # parameter names to freeze (full or partial)
+    ## freeze backbone
+    freeze = ['model.%s.' % x for x in range(10)]
+
     for k, v in model.named_parameters():
         v.requires_grad = True  # train all layers
         if any(x in k for x in freeze):
@@ -131,8 +133,6 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     else:
         lf = one_cycle(1, hyp['lrf'], lr_epochs)  # cosine 1->hyp['lrf']
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
-    # plot_lr_scheduler(optimizer, scheduler, epochs)
-
 
     # Logging
     if rank in [-1, 0] and wandb and wandb.run is None:
@@ -210,7 +210,6 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                                        hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
                                        world_size=opt.world_size, workers=opt.workers,
                                        pad=0.5, prefix=colorstr('val: '))[0]
-
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
             c = torch.tensor(labels[:, 0])  # classes
@@ -433,6 +432,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                 # Save last, best and delete
                 torch.save(ckpt, last)
                 if best_fitness == fi:
+                    logger.info('Saving best model!')
                     torch.save(ckpt, best)
                 del ckpt
 
