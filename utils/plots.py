@@ -88,7 +88,10 @@ def plot_one_box(x, img, color=None, label=None, line_thickness=None):
         t_size = cv2.getTextSize(label, 0, fontScale=tl / 2, thickness=tf)[0]
         c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
         cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
-        cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 2, [0, 0, 0], thickness=tf, lineType=cv2.LINE_AA)
+        ox, oy = c1[0], c1[1] - 2
+        oy = max(12, oy)
+        cv2.putText(img, label, (ox, oy), 0, tl / 2, [0, 0, 0], thickness=tf, lineType=cv2.LINE_AA)
+        # print((ox, oy))
 
 def plot_one_box_PIL(box, img, color=None, label=None, line_thickness=None):
     img = Image.fromarray(img)

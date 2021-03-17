@@ -9,8 +9,8 @@ import torch
 import yaml
 from tqdm import tqdm
 
-# from skopt.sampler import Lhs
-# from skopt.space import Space
+from skopt.sampler import Lhs
+from skopt.space import Space
 
 from models.experimental import attempt_load
 from utils.datasets import create_dataloader
@@ -26,7 +26,7 @@ def test(data,
          batch_size=32,
          imgsz=640,
          conf_thres=0.001,
-         iou_thres=0.3,  # for NMS
+         iou_thres=0.6,  # for NMS
          save_json=False,
          single_cls=False,
          augment=False,
@@ -40,6 +40,12 @@ def test(data,
          plots=True,
          log_imgs=0,  # number of logged images
          compute_loss=None):
+    ##
+    one_batch = False
+    if batch_size<0:
+        batch_size = -batch_size
+        one_batch = True
+
     # Initialize/load model and set device
     training = model is not None
     if training:  # called by train.py
@@ -66,6 +72,9 @@ def test(data,
     half = device.type != 'cpu'  # half precision only supported on CUDA
     if half:
         model.half()
+    
+    def clip(x, a, b=None):
+        return np.array(x).clip(a,b).tolist()
 
     # Configure
     model.eval()
@@ -103,18 +112,22 @@ def test(data,
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
 
     ## NMS parameter sweep.................. ##
-    # nms_samples = 0
+    nms_samples = 0
     # nms_new = False ## params sweep parameter
-    # nms_samples = 25
-    # space = Space([(0., 0.8), (-0.8, 0.8)])
+    # nms_samples = 100
+    # space = Space([(0.001, 0.2), (-.6, 0.6)])
 
-    # if nms_samples>0:
-    #     lhs = Lhs(criterion="correlation", iterations=1000)
-    #     nms_params = lhs.generate(space.dimensions, nms_samples)
-    #     nms_stats = [[] for _ in range(nms_samples)]
-    #     print('\n\nCLASS NAMES:\n{}\n\n'.format(names).replace(',','\n'))
-
+    if nms_samples>0:
+        lhs = Lhs(criterion="correlation", iterations=1000)
+        nms_params = lhs.generate(space.dimensions, nms_samples)
+        nms_stats = [[] for _ in range(nms_samples)]
+        print('\n\nCLASS NAMES:\n{}\n\n'.format(names).replace(',','\n'))
     ## ..................NMS parameter sweep ##
+
+    # iou_thres = [0.579, 0.059, 0.094, 0.37, 0.164, 0.02, 0.354, 0.494, 0.035, 0.311, 0.598, 0.598, 0.047, 0.278, 0.059, 0.164, 0.18, 0.37, 0.236, 0.047, 0.311, 0.18, 0.598, 0.2, 0.363]
+    # conf_thres = [0.177, 0.093, 0.195, 0.189, 0.088, 0.168, 0.081, 0.199, 0.089, 0.142, 0.062, 0.062, 0.18, 0.172, 0.093, 0.088, 0.036, 0.189, 0.196, 0.18, 0.142, 0.036, 0.062, 0.089, 0.151]
+    # iou_thres = clip(iou_thres, 0.1)
+    # conf_thres = clip(conf_thres, 0.001, 0.01)
 
     for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
         img = img.to(device, non_blocking=True)
@@ -129,6 +142,9 @@ def test(data,
             inf_out, train_out = model(img, augment=augment)  # inference and training outputs
             t0 += time_synchronized() - t
 
+            if one_batch:
+                return
+
             # Compute loss
             if compute_loss:
                 loss += compute_loss([x.float() for x in train_out], targets)[1][:3]  # box, obj, cls
@@ -140,16 +156,16 @@ def test(data,
             output = non_max_suppression(inf_out, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True)
             t1 += time_synchronized() - t
 
-            # ## NMS parameter sweep ##
-            # if nms_samples>0:
-            #     outputs = []
-            #     for x in nms_params:
-            #         conf, iou = x[0], x[1]
-            #         # classes=None
-            #         # iou = -iou if nms_new else iou ## signal to use new NMS (on classes)
-            #         out = non_max_suppression(inf_out, conf_thres=conf, iou_thres=iou, labels=lb, multi_label=True)#, names=names)
-            #         outputs.append(out)
-            # ## ...NMS sweep ##
+            ## NMS parameter sweep ##
+            if nms_samples>0:
+                outputs = []
+                for x in nms_params:
+                    conf, iou = x[0], x[1]
+                    # classes=None
+                    # iou = -iou if nms_new else iou ## signal to use new NMS (on classes)
+                    out = non_max_suppression(inf_out, conf_thres=conf, iou_thres=iou, labels=lb, multi_label=True)#, names=names)
+                    outputs.append(out)
+            ## ...NMS sweep ##
 
         # Statistics per image
         for si, pred in enumerate(output):
@@ -242,60 +258,60 @@ def test(data,
             f = save_dir / f'test_batch{batch_i}_pred.jpg'  # predictions
             Thread(target=plot_images, args=(img, output_to_target(output), paths, f, names), daemon=True).start()
 
-        # ## NMS parameter sweep : stats ##
-        # print('')
-        # if nms_samples>0:
-        #     for hi, output in enumerate(outputs):
-        #         # Statistics per image
-        #         for si, pred in enumerate(output):
-        #             labels = targets[targets[:, 0] == si, 1:]
-        #             nl = len(labels)
-        #             tcls = labels[:, 0].tolist() if nl else []  # target class
-        #             path = Path(paths[si])
-        #             # seen += 1
+        ## NMS parameter sweep : stats ##
+        print('')
+        if nms_samples>0:
+            for hi, output in enumerate(outputs):
+                # Statistics per image
+                for si, pred in enumerate(output):
+                    labels = targets[targets[:, 0] == si, 1:]
+                    nl = len(labels)
+                    tcls = labels[:, 0].tolist() if nl else []  # target class
+                    path = Path(paths[si])
+                    # seen += 1
 
-        #             if len(pred) == 0:
-        #                 if nl:
-        #                     stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
-        #                 continue
+                    if len(pred) == 0:
+                        if nl:
+                            stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
+                        continue
 
-        #             # Predictions
-        #             predn = pred.clone()
-        #             scale_coords(img[si].shape[1:], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
+                    # Predictions
+                    predn = pred.clone()
+                    scale_coords(img[si].shape[1:], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
 
-        #             # Assign all predictions as incorrect
-        #             correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
-        #             if nl:
-        #                 detected = []  # target indices
-        #                 tcls_tensor = labels[:, 0]
+                    # Assign all predictions as incorrect
+                    correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
+                    if nl:
+                        detected = []  # target indices
+                        tcls_tensor = labels[:, 0]
 
-        #                 # target boxes
-        #                 tbox = xywh2xyxy(labels[:, 1:5])
-        #                 scale_coords(img[si].shape[1:], tbox, shapes[si][0], shapes[si][1])  # native-space labels
+                        # target boxes
+                        tbox = xywh2xyxy(labels[:, 1:5])
+                        scale_coords(img[si].shape[1:], tbox, shapes[si][0], shapes[si][1])  # native-space labels
 
-        #                 # Per target class
-        #                 for cls in torch.unique(tcls_tensor):
-        #                     ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1) # target indices
-        #                     pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # prediction indices
+                        # Per target class
+                        for cls in torch.unique(tcls_tensor):
+                            ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1) # target indices
+                            pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # prediction indices
 
-        #                     # Search for detections
-        #                     if pi.shape[0]:
-        #                         # Prediction to target ious
-        #                         ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1)  # best ious, indices
-        #                         # Append detections
-        #                         detected_set = set()
-        #                         for j in (ious > iouv[0]).nonzero(as_tuple=False):
-        #                             d = ti[i[j]]  # detected target
-        #                             if d.item() not in detected_set:
-        #                                 detected_set.add(d.item())
-        #                                 detected.append(d)
-        #                                 correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
-        #                                 if len(detected) == nl:  # all targets already located in image
-        #                                     break
+                            # Search for detections
+                            if pi.shape[0]:
+                                # Prediction to target ious
+                                ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1)  # best ious, indices
+                                # Append detections
+                                detected_set = set()
+                                for j in (ious > iouv[0]).nonzero(as_tuple=False):
+                                    d = ti[i[j]]  # detected target
+                                    if d.item() not in detected_set:
+                                        detected_set.add(d.item())
+                                        detected.append(d)
+                                        correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
+                                        if len(detected) == nl:  # all targets already located in image
+                                            break
 
-        #             # Append statistics (correct, conf, pcls, tcls)
-        #             nms_stats[hi].append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
-        # ## ...NMS sweep ##
+                    # Append statistics (correct, conf, pcls, tcls)
+                    nms_stats[hi].append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
+        ## ...NMS sweep ##
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
@@ -318,46 +334,48 @@ def test(data,
     def update(k,V,P,v,p):
         if v > V[k]:
             V[k] = v
-            P[k] = p
+            P[k] = p.copy()
     
-    # ## NMS parameter sweep : results ##
-    # if nms_samples>0:
-    #     ## initialize best parameter dict
-    #     f1_best = { names[c]:-1 for c in ap_class }
-    #     x_best = { names[c]:None for c in ap_class }
-    #     f1_best['all'], x_best['all'] = 0,None
-    #     for hi, stat in enumerate(nms_stats):
-    #         x = np.array(nms_params[hi])
-    #         conf, iou = x[0], x[1]
-    #         # Compute statistics
-    #         stat = [np.concatenate(x, 0) for x in zip(*stat)]  # to numpy
-    #         if len(stat) and stat[0].any():
-    #             mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stat, plot=False)
-    #             x[0] = conf_best
-    #             update('all', f1_best, x_best, mf1, x)
-    #             if (verbose or (nc <= 20 and not training)) and nc > 1 and len(stats):
-    #                 for i, c in enumerate(ap_class):
-    #                     x[0] = cc[i]
-    #                     update(names[c], f1_best, x_best, f1[i], x)
+    ## NMS parameter sweep : results ##
+    if nms_samples>0:
+        ## initialize best parameter dict
+        f1_best = { names[c]:-1 for c in ap_class }
+        x_best = { names[c]:None for c in ap_class }
+        f1_best['all'], x_best['all'] = 0,None
+        for hi, stat in enumerate(nms_stats):
+            x = np.array(nms_params[hi])
+            conf, iou = x[0], x[1]
+            # Compute statistics
+            stat = [np.concatenate(x, 0) for x in zip(*stat)]  # to numpy
+            if len(stat) and stat[0].any():
+                mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stat, plot=False)
+                xx = np.array([x[1], x[0], conf_best])
+                update('all', f1_best, x_best, mf1, xx)
+                if (verbose or (nc <= 20 and not training)) and nc > 1 and len(stats):
+                    for i, c in enumerate(ap_class):
+                        xx[2] = cc[i]
+                        update(names[c], f1_best, x_best, f1[i], xx)
 
-    #     print('NMS_BEST\tf1\tconf\tiou')
-    #     keys, confs, ious = [],[],[]
-    #     for k in f1_best.keys():
-    #         print('{0} \t{1:0.2f}\t{2:0.3f}\t{3:0.3f}'.format(k, f1_best[k], x_best[k][0], x_best[k][1]))
-    #         keys.append(k)
-    #         confs.append(x_best[k].round(3)[0])
-    #         ious.append(x_best[k].round(3)[1])
-    #     print(keys[:-1])
-    #     print(confs[:-1])
-    #     print(ious[:-1])
+        print('NMS_BEST\tf1\tiou\tconf1\tconf2')
+        keys, confs1, confs2, ious = [],[],[],[]
+        for k in f1_best.keys():
+            print('{0} \t{1:0.2f}\t{2:0.3f}\t{3:0.3f}\t{4:0.3f}'.format(k, f1_best[k], x_best[k][0], x_best[k][1], x_best[k][2]))
+            keys.append(k)
+            ious.append(x_best[k].round(3)[0])
+            confs1.append(x_best[k].round(3)[1])
+            confs2.append(x_best[k].round(3)[2])
+        print(keys[:-1])
+        print('iou_thres = {}'.format(ious[:-1]))
+        print('conf_thres_1 = {}'.format(confs1[:-1]))
+        print('conf_thres_2 = {}'.format(confs2[:-1]))
 
-    #     print(ap_class)
-    #     print(nt)
+        print(ap_class)
+        print(nt)
 
-    #     print('{0} \t{1:0.3f}\t{2:0.3f}'.format(keys[-1], confs[-1], ious[-1]))
+        print('{0} \t{1:0.3f}\t{2:0.3f}\t{3:0.3f}'.format(keys[-1], ious[-1], confs1[-1], confs2[-1]))
 
-    #     print('\n')
-    # ## ...NMS sweep ##
+        print('\n')
+    ## ...NMS sweep ##
 
     # Print speeds
     t = tuple(x / seen * 1E3 for x in (t0, t1, t0 + t1)) + (imgsz, imgsz, batch_size)  # tuple

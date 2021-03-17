@@ -11,9 +11,13 @@ from models.experimental import attempt_load
 from utils.datasets import LoadStreams, LoadImages
 from utils.general import check_img_size, check_requirements, check_imshow, non_max_suppression, apply_classifier, \
     scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path
-from utils.plots import plot_one_box
+from utils.plots import plot_one_box, color_list
 from utils.torch_utils import select_device, load_classifier, time_synchronized
 
+def load_list(fn):
+    with open(fn) as f:
+        lines = f.read().splitlines()
+    return lines
 
 def detect(save_img=False):
     source, weights, view_img, save_txt, imgsz = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size
@@ -52,9 +56,13 @@ def detect(save_img=False):
         save_img = True
         dataset = LoadImages(source, img_size=imgsz, stride=stride)
 
-    # Get names and colors
-    names = model.module.names if hasattr(model, 'module') else model.names
-    colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
+    # Get names and color
+    if len(opt.names)>0:
+        names = load_list(opt.names)
+    else:
+        names = model.module.names if hasattr(model, 'module') else model.names
+    # colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
+    colors = color_list()
 
     # Run inference
     if device.type != 'cpu':
@@ -78,6 +86,9 @@ def detect(save_img=False):
         # Apply Classifier
         if classify:
             pred = apply_classifier(pred, modelc, img, im0s)
+        
+        first = names.copy() ## only print class name the first time
+        # first = None ## to deactivate
 
         # Process detections
         for i, det in enumerate(pred):  # detections per image
@@ -109,8 +120,14 @@ def detect(save_img=False):
                             f.write(('%g ' * len(line)).rstrip() % line + '\n')
 
                     if save_img or view_img:  # Add bbox to image
-                        label = f'{names[int(cls)]} {conf:.2f}'
-                        plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=3)
+                        label = True
+                        cls_id = int(cls)
+                        if first and first[cls_id]:
+                            first[cls_id]=0
+                        else:
+                            label = False
+                        label = f'{names[cls_id]} {conf:.2f}' if label else f'{conf:.2f}'
+                        plot_one_box(xyxy, im0, label=label, color=colors[cls_id % len(colors)], line_thickness=1)#3
 
             # Print time (inference + NMS)
             print(f'{s}Done. ({t2 - t1:.3f}s)')
@@ -149,8 +166,8 @@ if __name__ == '__main__':
     parser.add_argument('--weights', nargs='+', type=str, default='yolov5s.pt', help='model.pt path(s)')
     parser.add_argument('--source', type=str, default='data/images', help='source')  # file/folder, 0 for webcam
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
+    parser.add_argument('--conf-thres', type=float, default=0.3, help='object confidence threshold')
+    parser.add_argument('--iou-thres', type=float, default=0.3, help='IOU threshold for NMS')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', action='store_true', help='display results')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
@@ -162,6 +179,7 @@ if __name__ == '__main__':
     parser.add_argument('--project', default='runs/detect', help='save results to project/name')
     parser.add_argument('--name', default='exp', help='save results to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
+    parser.add_argument('--names', default='', help='coco.names file')
     opt = parser.parse_args()
     print(opt)
     check_requirements()

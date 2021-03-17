@@ -210,6 +210,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                                        hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
                                        world_size=opt.world_size, workers=opt.workers,
                                        pad=0.5, prefix=colorstr('val: '))[0]
+
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
             c = torch.tensor(labels[:, 0])  # classes
@@ -247,7 +248,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         print('Stepping lr_scheduler forward {} epochs...'.format(init_epochs))
     for i in range(init_epochs-1):
         scheduler.step()
-
+    
     ##########################################################################
     if init_epochs>0 and rank in [-1, 0]:  # check initial model performance....
         test.test(opt.data,

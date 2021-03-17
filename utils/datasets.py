@@ -353,6 +353,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.stride = stride
         self.path = path
 
+        self.augment = augment or (hyp.get('augment_gray') and hyp['augment_gray']!=0)
+
         try:
             f = []  # image files
             for p in path if isinstance(path, list) else [path]:
@@ -552,6 +554,11 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             # Augment colorspace
             augment_hsv(img, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
 
+            ## Augment grayscale (pseudo-thermal)
+            if hyp.get('augment_gray'):
+                img = augment_gray(img, hyp['augment_gray'])
+
+
             # Apply cutouts
             # if random.random() < 0.9:
             #     labels = cutout(img, labels)
@@ -626,6 +633,9 @@ def load_image(self, index):
     if img is None:  # not cached
         path = self.img_files[index]
         img = cv2.imread(path)  # BGR
+        #######################
+        # img = cv2.transpose(img)
+        #######################
         assert img is not None, 'Image Not Found ' + path
         h0, w0 = img.shape[:2]  # orig hw
         r = self.img_size / max(h0, w0)  # resize image to img_size
@@ -650,6 +660,59 @@ def augment_hsv(img, hgain=0.5, sgain=0.5, vgain=0.5):
     img_hsv = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val))).astype(dtype)
     cv2.cvtColor(img_hsv, cv2.COLOR_HSV2BGR, dst=img)  # no return needed
 
+def rgb2gray(rgb):
+    return np.dot(rgb[...,:3], [0.2989, 0.5870, 0.1140]).round().astype(np.uint8)
+
+def repeat_channel(x, n=3):
+    return x[:,:,None].repeat(n, 2)
+
+def save_im(im, f):
+    im.save(f)
+
+def save_np(x, f, gray=True):
+    im = Image.fromarray(x)
+    if gray: im = im.convert('L')
+    im.save(f)
+
+def up(x):
+    return (x*255).round().astype(np.uint8)
+
+def augment_gray(img, p):
+    if p==0:
+        return img
+    r1 = random.randint(1,2)
+    if p>0:
+        r2 = 1.0 - p*random.random()
+    else:
+        p=-p
+        r2 = 1.0-(1.0-p)/2 - p*random.random()
+
+    g = rgb2gray(img)*r2
+    g = g + random.randint(0, int(255-g.max()))
+
+    if r1==2: ## invert black/white
+        g = 255-g
+    g = repeat_channel(g)
+
+    # save_np(g, '/home/david/code/repo/ai_docker/datasets/fpl/component/zgray_{}.jpg'.format(random.randint(100,1000000000)))
+
+    return g
+
+    # im = Image.fromarray(g1).convert('L')
+    # colormaps = [mpl.cm.viridis,  mpl.cm.viridis_r, mpl.cm.jet_r]
+    # cmap = colormaps[random.randint(0,len(colormaps)-1)]
+    # cNorm = mpl.colors.Normalize(vmin=0, vmax=255)
+    # scalarMap = mtpltcm.ScalarMappable(norm=cNorm, cmap=cmap)
+    # rgb = up(scalarMap.to_rgba(im)[:,:,:3])
+    # # save_np(rgb, c1, False)
+
+    # g2 = rgb2gray(rgb)
+    # if r==3: return repeat_channel(g2)
+    # if r==4: return repeat_channel(255-g2)
+
+    # g2r = 255-g2
+    # save_np(g2, f3)
+    # save_np(g2r, f4)
 
 def hist_equalize(img, clahe=True, bgr=False):
     # Equalize histogram on BGR image 'img' with img.shape(n,m,3) and range 0-255
