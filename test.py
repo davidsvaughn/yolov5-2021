@@ -9,8 +9,8 @@ import torch
 import yaml
 from tqdm import tqdm
 
-from skopt.sampler import Lhs
-from skopt.space import Space
+# from skopt.sampler import Lhs
+# from skopt.space import Space
 
 from models.experimental import attempt_load
 from utils.datasets import create_dataloader
