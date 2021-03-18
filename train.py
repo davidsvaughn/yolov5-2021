@@ -85,10 +85,13 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     else:
         model = Model(opt.cfg, ch=3, nc=nc).to(device)  # create
 
-    # Freeze
+        # Freeze first N layers?
     freeze = []  # parameter names to freeze (full or partial)
-    ## freeze backbone
-    freeze = ['model.%s.' % x for x in range(10)]
+    ## freeze backbone layers?
+    if hyp.get('freeze'):
+        N = int(hyp['freeze'])+1
+        freeze = ['model.%s.' % x for x in range(N)]
+        logger.info('Freezing first {} layers of network'.format(N))
 
     for k, v in model.named_parameters():
         v.requires_grad = True  # train all layers
