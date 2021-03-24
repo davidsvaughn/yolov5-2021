@@ -11,7 +11,7 @@ from . import general
 
 def fitness(x):
     # Model fitness as a weighted combination of metrics
-    w = np.array([0., 0., 8., 0., 2.])  # weights for [P, R, F1, mAP@0.5, mAP@0.5:0.95]
+    w = np.array([0., 0., 5., 0., 5.])  # weights for [P, R, F1, mAP@0.5, mAP@0.5:0.95]
     w = w / w.sum()
     return (x[:, :5] * w).sum(1)
 
