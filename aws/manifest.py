@@ -26,6 +26,8 @@ def get_labels(fn):
     with open(fn, 'r') as f:
         lines = f.readlines()
     labs = np.array( [np.array(line.strip().split(' ')).astype(float).round(6) for line in lines])
+    if len(labs)==0:
+        return labs.tolist()
     labs[:,1:] = labs[:,1:].clip(0,1)
     labs = [[int(x[0])] + x[1:] for x in labs.tolist()]
     return labs
@@ -35,10 +37,8 @@ def label_matrix(lab_files):
     for lf in lab_files:
         f = LAB_DIR + lf
         labs = get_labels(f)
-        if len(labs)==0:
-            continue
         Y.append([y[0] for y in labs])
-    n = max([max(y) for y in Y]) + 1
+    n = max([max(y) for y in Y if len(y)>0]) + 1
     Z = []
     for y in Y:
         z = np.zeros(n)
@@ -146,6 +146,7 @@ def build_manifest():
 
 if __name__ == "__main__":
     
+    ## set these values appropriately...
     S3_IMG_BUCKET = 's3://ai-labeling/FPL/thermal/rgb_labeled/' ## where images will be stored
     DATA_DIR = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/' 
     LAB_DIR = DATA_DIR + 'labels/' ## local path where all labels files are
@@ -156,6 +157,6 @@ if __name__ == "__main__":
     ## ** don't need to normalize, just give *relative* weightings **
     ## the code will normalize so sum()==1
     SPLITS = [20,3,2]
-
+    
     build_manifest()
     
