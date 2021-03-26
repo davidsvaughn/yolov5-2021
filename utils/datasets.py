@@ -122,7 +122,7 @@ class _RepeatSampler(object):
 
 
 class LoadImages:  # for inference
-    def __init__(self, path, img_size=640, stride=32):
+    def __init__(self, path, img_size=640, stride=32, verbose=True):
         p = str(Path(path).absolute())  # os-agnostic absolute path
         if '*' in p:
             files = sorted(glob.glob(p, recursive=True))  # glob
@@ -139,6 +139,7 @@ class LoadImages:  # for inference
 
         self.img_size = img_size
         self.stride = stride
+        self.verbose = verbose
         self.files = images + videos
         self.nf = ni + nv  # number of files
         self.video_flag = [False] * ni + [True] * nv
@@ -181,7 +182,8 @@ class LoadImages:  # for inference
             self.count += 1
             img0 = cv2.imread(path)  # BGR
             assert img0 is not None, 'Image Not Found ' + path
-            print(f'image {self.count}/{self.nf} {path}: ', end='')
+            if self.verbose:
+                print(f'image {self.count}/{self.nf} {path}: ', end='')
 
         # Padded resize
         img = letterbox(img0, self.img_size, stride=self.stride)[0]
@@ -353,7 +355,10 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.stride = stride
         self.path = path
 
-        self.augment = augment or (hyp.get('augment_gray') and hyp['augment_gray']!=0)
+        self.augment = augment
+        if hyp is not None:
+            if hyp.get('augment_gray') and hyp['augment_gray']!=0:
+                self.augment = True
 
         try:
             f = []  # image files
@@ -555,8 +560,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             augment_hsv(img, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
 
             ## Augment grayscale (pseudo-thermal)
-            if hyp.get('augment_gray'):
-                img = augment_gray(img, hyp['augment_gray'])
+            if hyp is not None:
+                if hyp.get('augment_gray'):
+                    img = augment_gray(img, hyp['augment_gray'])
 
 
             # Apply cutouts
