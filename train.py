@@ -387,18 +387,21 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
             # mAP
             ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
             final_epoch = epoch + 1 == epochs
-            if not opt.notest or final_epoch:  # Calculate mAP
-                results, maps, times = test.test(opt.data,
-                                                 batch_size=test_batch_size,
-                                                 imgsz=imgsz_test,
-                                                 model=ema.ema,
-                                                 single_cls=opt.single_cls,
-                                                 dataloader=testloader,
-                                                 save_dir=save_dir,
-                                                 verbose=nc < 50 and final_epoch,
-                                                 plots=plots and final_epoch,
-                                                 log_imgs=opt.log_imgs if wandb else 0,
-                                                 compute_loss=compute_loss)
+            try:
+                if not opt.notest or final_epoch:  # Calculate mAP
+                    results, maps, times = test.test(opt.data,
+                                                     batch_size=test_batch_size,
+                                                     imgsz=imgsz_test,
+                                                     model=ema.ema,
+                                                     single_cls=opt.single_cls,
+                                                     dataloader=testloader,
+                                                     save_dir=save_dir,
+                                                     verbose=nc < 50 and final_epoch,
+                                                     plots=plots and final_epoch,
+                                                     log_imgs=opt.log_imgs if wandb else 0,
+                                                     compute_loss=compute_loss)
+            except:
+                print('validation run failed....')
 
             # Write
             with open(results_file, 'a') as f:
