@@ -7,9 +7,32 @@ import pandas as pd
 from collections import Counter
 from skmultilearn.model_selection import IterativeStratification
 
-## pip install scikit-multilearn
-## pip install arff
-## pip install tabulate
+## set these values appropriately...
+
+## FPL Components ##
+# S3_IMG_BUCKET = 's3://ai-labeling/FPL/thermal/rgb_labeled/' ## where images will be stored
+# DATA_DIR = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/' 
+# LAB_DIR = DATA_DIR + 'labels/' ## local path where all labels files are
+# NAMES_FILE = DATA_DIR + 'coco.names' ## optional class names file
+# MANIFEST_FILE = DATA_DIR + 'manifest.txt' ## where to save manifest locally
+
+
+## NextEra Construction ##
+S3_IMG_BUCKET = 's3://ai-labeling/NextEraConstruction/components_feb_05_2021/Imagery/'
+DATA_DIR = '/home/david/code/repo/ai_docker/datasets/nextera/construction/'
+LAB_DIR = DATA_DIR + 'labels/' ## local path where all labels files are
+NAMES_FILE = DATA_DIR + 'coco.names' ## optional class names file
+MANIFEST_FILE = DATA_DIR + 'manifest.txt' ## where to save manifest locally
+
+## TRAIN/TEST/VAL split... 
+## ** don't need to normalize, just give *relative* weightings **
+## the code will normalize so sum()==1
+SPLITS = [22,3,3]
+
+## ability to filter out certain classes
+BLACKLIST = None
+# BLACKLIST = [2, 3, 5, 7, 15, 17, 19, 22, 23]
+    
 
 ################################################################
 
@@ -22,12 +45,18 @@ def read_lines(fn):
         lines = [n.strip() for n in f.readlines()]
     return lines
 
-def get_labels(fn):
+def get_labels(fn, blacklist=None):
     with open(fn, 'r') as f:
         lines = f.readlines()
     labs = np.array( [np.array(line.strip().split(' ')).astype(float).round(6) for line in lines])
     if len(labs)==0:
         return labs.tolist()
+    
+    ## filter out blacklisted classes
+    if blacklist is not None and len(blacklist)>0:
+        idx = ~np.in1d(labs[:,0], blacklist) ## label rows that are NOT in blacklist
+        labs = labs[idx]
+        
     labs[:,1:] = labs[:,1:].clip(0,1)
     labs = [[int(x[0])] + x[1:] for x in labs.tolist()]
     return labs
@@ -74,9 +103,9 @@ def train_test_val_split(X, Y, splits, order=2):
     
     return train_set, test_set, val_set
 
-def build_json_string(x, name='train'):
+def build_json_string(x, name='train', blacklist=None):
     label_file = LAB_DIR + x
-    y = get_labels(label_file)
+    y = get_labels(label_file, blacklist)
     s3url = S3_IMG_BUCKET + x.replace('.txt','.jpg')
         
     s = {'s3Url' : s3url,
@@ -85,10 +114,10 @@ def build_json_string(x, name='train'):
          }
     return json.dumps(s).replace("/", "\\/").replace(' ','')
     
-def build_set(X_files, name='train'):
+def build_set(X_files, name='train', blacklist=None):
     entries = []
     for x in X_files.squeeze():
-        e = build_json_string(x, name)
+        e = build_json_string(x, name, blacklist)
         entries.append(e)
     return entries
 
@@ -100,13 +129,21 @@ def build_manifest():
     X = np.array(lab_files)[:,None]
     Y = label_matrix(lab_files)
     
+    ## filter out any blacklisted classes
+    blacklist = None
+    if BLACKLIST is not None and len(BLACKLIST)>0:
+        blacklist = np.array(BLACKLIST)
+        Y[:,blacklist] = 0
+        idx = np.where((Y.sum(1)>0))[0]
+        X,Y = X[idx], Y[idx]
+    
     ## get stratified splits
     (X_train, y_train), (X_test, y_test), (X_val, y_val) = train_test_val_split(X, Y, SPLITS, order=2)
     
     ## convert to manifest entries
-    train_entries = build_set(X_train, name='train')
-    test_entries = build_set(X_test, name='test')
-    val_entries = build_set(X_val, name='val')
+    train_entries = build_set(X_train, name='train', blacklist=blacklist)
+    test_entries = build_set(X_test, name='test', blacklist=blacklist)
+    val_entries = build_set(X_val, name='val', blacklist=blacklist)
     
     ## save manifest
     with open(MANIFEST_FILE, "w") as f:
@@ -117,20 +154,20 @@ def build_manifest():
     ## get class names
     nc = y_train.shape[1]
     if os.path.exists(NAMES_FILE):
-        classes = np.array(read_lines(NAMES_FILE))
+        names = np.array(read_lines(NAMES_FILE))
     else:
-        classes = np.arange(nc)
+        names = np.arange(nc)
     
     ## print stats
     df_image_counts = pd.DataFrame({'TRAIN': y_train.astype(np.bool).sum(0),
                                     'TEST': y_test.astype(np.bool).sum(0),
                                     'VAL': y_val.astype(np.bool).sum(0)}, 
-                                   index = classes) 
+                                   index = names) 
     
     df_target_counts = pd.DataFrame({'TRAIN': y_train.astype(np.int32).sum(0),
                                      'TEST': y_test.astype(np.int32).sum(0),
                                      'VAL': y_val.astype(np.int32).sum(0)}, 
-                                    index = classes)
+                                    index = names)
     
     print('\nIMAGE COUNTS PER SET/CLASS:')
     print(df_image_counts.to_markdown())
@@ -144,19 +181,8 @@ def build_manifest():
     print('VAL  \t| {}'.format(y_val.shape[0]))
 
 
-if __name__ == "__main__":
-    
-    ## set these values appropriately...
-    S3_IMG_BUCKET = 's3://ai-labeling/FPL/thermal/rgb_labeled/' ## where images will be stored
-    DATA_DIR = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/' 
-    LAB_DIR = DATA_DIR + 'labels/' ## local path where all labels files are
-    NAMES_FILE = DATA_DIR + 'coco.names' ## optional class names file
-    MANIFEST_FILE = DATA_DIR + 'manifest.txt' ## where to save manifest locally
-    
-    ## TRAIN/TEST/VAL split... 
-    ## ** don't need to normalize, just give *relative* weightings **
-    ## the code will normalize so sum()==1
-    SPLITS = [20,3,2]
+# if __name__ == "__main__":
     
     build_manifest()
+    print('Done!')
     
