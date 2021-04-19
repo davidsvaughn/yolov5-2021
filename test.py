@@ -326,7 +326,8 @@ def test(data,
     print(pf % ('all', seen, nt.sum(), mp, mr, mf1, map50, map))
 
     # Print results per class
-    if (verbose or (nc < 50 and not training)) and nc > 1 and len(stats):
+    # if (verbose or (nc < 50 and not training)) and nc > 1 and len(stats):
+    if (verbose or nc < 50) and nc > 1 and len(stats):
         for i, c in enumerate(ap_class):
             print(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i]))
 
