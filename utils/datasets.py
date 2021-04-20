@@ -562,7 +562,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             ## Augment grayscale (pseudo-thermal)
             if hyp is not None:
                 if hyp.get('augment_gray'):
-                    img = augment_gray(img, hyp['augment_gray'])
+                    if max(h0, w0)>1000:## must be RGB
+                        img = augment_gray(img, hyp['augment_gray'])
 
 
             # Apply cutouts

@@ -16,13 +16,19 @@ from skmultilearn.model_selection import IterativeStratification
 # NAMES_FILE = DATA_DIR + 'coco.names' ## optional class names file
 # MANIFEST_FILE = DATA_DIR + 'manifest.txt' ## where to save manifest locally
 
+## FPL Thermal w/ RGB ##
+S3_IMG_BUCKET = 's3://ai-secure-sagemaker-bucket/job_resources/distribution_poles_rgb_fpl/images/' ## where images will be stored
+# DATA_DIR = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/' 
+LAB_DIR = '/home/david/code/repo/ai_docker/datasets/fpl/component/labels_filt/' ## local path where all labels files are
+NAMES_FILE = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/coco.names' ## optional class names file
+MANIFEST_FILE = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/manifests/component/rgb_augmented/manifest.txt' ## where to save manifest locally
 
 ## NextEra Construction ##
-S3_IMG_BUCKET = 's3://ai-labeling/NextEraConstruction/components_feb_05_2021/Imagery/'
-DATA_DIR = '/home/david/code/repo/ai_docker/datasets/nextera/construction/'
-LAB_DIR = DATA_DIR + 'labels/' ## local path where all labels files are
-NAMES_FILE = DATA_DIR + 'coco.names' ## optional class names file
-MANIFEST_FILE = DATA_DIR + 'manifest.txt' ## where to save manifest locally
+# S3_IMG_BUCKET = 's3://ai-labeling/NextEraConstruction/components_feb_05_2021/Imagery/'
+# DATA_DIR = '/home/david/code/repo/ai_docker/datasets/nextera/construction/'
+# LAB_DIR = DATA_DIR + 'labels/' ## local path where all labels files are
+# NAMES_FILE = DATA_DIR + 'coco.names' ## optional class names file
+# MANIFEST_FILE = DATA_DIR + 'manifest.txt' ## where to save manifest locally
 
 ## TRAIN/TEST/VAL split... 
 ## ** don't need to normalize, just give *relative* weightings **
@@ -181,7 +187,7 @@ def build_manifest():
     print('VAL  \t| {}'.format(y_val.shape[0]))
 
 
-# if __name__ == "__main__":
+if __name__ == "__main__":
     
     build_manifest()
     print('Done!')
