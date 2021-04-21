@@ -478,7 +478,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                 del ckpt
             
             # Upload best model to s3
-            if (epoch+1)%10==0:
+            if epoch>50 and epoch%10==0:
                 if new_best_model:
                     upload_model(opt)
                     new_best_model = False
