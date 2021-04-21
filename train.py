@@ -33,8 +33,41 @@ from utils.google_utils import attempt_download
 from utils.loss import ComputeLoss
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
+import boto3
 
 logger = logging.getLogger(__name__)
+
+S3_CLIENT = None
+
+def upload_model(opt):
+    global S3_CLIENT
+
+    if len(opt.weights_path)==0:
+        return # params not passed in
+
+    if S3_CLIENT is None:
+        S3_CLIENT = boto3.client("s3")
+
+    if os.path.exists(opt.weights_path):
+        logger.info(f"Uploading {opt.weights_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/weights.pt")
+        S3_CLIENT.upload_file(opt.weights_path, opt.s3_bucket, f"{opt.s3_prefix}/weights.pt")
+    else:
+        logger.info(f"File does not exist: {opt.weights_path}")
+
+    if os.path.exists(opt.categories_path):
+        logger.info(f"Uploading {opt.categories_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/categories.json")
+        S3_CLIENT.upload_file(opt.categories_path, opt.s3_bucket, f"{opt.s3_prefix}/categories.json")
+    else:
+        logger.info(f"File does not exist: {opt.categories_path}")
+
+    if os.path.exists(opt.hyp_path):
+        logger.info(f"Uploading {opt.hyp_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/hyp.yaml")
+        S3_CLIENT.upload_file(opt.hyp_path, opt.s3_bucket, f"{opt.s3_prefix}/hyp.yaml")
+    else:
+        logger.info(f"File does not exist: {opt.hyp_path}")
+
+    logger.info('All artifacts uploaded!')
+    
 
 def train(hyp, opt, device, tb_writer=None, wandb=None):
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
@@ -85,7 +118,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     else:
         model = Model(opt.cfg, ch=3, nc=nc).to(device)  # create
 
-        # Freeze first N layers?
+    # Freeze first N layers?
     freeze = []  # parameter names to freeze (full or partial)
     ## freeze backbone layers?
     if hyp.get('freeze'):
@@ -207,6 +240,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
 
     # Process 0
     if rank in [-1, 0]:
+        new_best_model = False
         test_batch_size = batch_size
         # test_batch_size *= 2
         testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
@@ -368,11 +402,10 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                     wandb.log({"Mosaics": [wandb.Image(str(x), caption=x.name) for x in save_dir.glob('train*.jpg')
                                            if x.exists()]}, commit=False)
             # end batch ------------------------------------------------------------------------------------------------
-        ## fix slowdown problem?
         if rank in [-1, 0]:
             logger.info('\tepoch completed in %.2f min.\n' % ((time.time() - t1) / 60))
             t1 = time.time()
-        if (epoch+1)%10==0: 
+        if (epoch+1)%10==0:
             torch.cuda.empty_cache()
             if rank in [-1, 0]:
                 logger.info('\tempty cuda cache took %.2f sec.\n' % ((time.time() - t1)))
@@ -441,7 +474,14 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                 if best_fitness == fi:
                     logger.info('Saving best model!')
                     torch.save(ckpt, best)
+                    new_best_model = True
                 del ckpt
+            
+            # Upload best model to s3
+            if (epoch+1)%10==0:
+                if new_best_model:
+                    upload_model(opt)
+                    new_best_model = False
 
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training
@@ -522,6 +562,12 @@ if __name__ == '__main__':
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
     parser.add_argument('--linear-lr', action='store_true', help='linear LR')
+    # Params needed to upload model checkpoints to s3 
+    parser.add_argument('--s3_bucket', type=str, default='', help='s3_bucket')
+    parser.add_argument('--s3_prefix', type=str, default='', help='s3_prefix')
+    parser.add_argument('--weights_path', type=str, default='', help='weights_path')
+    parser.add_argument('--hyp_path', type=str, default='', help='hyp_path')
+    parser.add_argument('--categories_path', type=str, default='', help='categories_path')
     opt = parser.parse_args()
 
     # Set DDP variables
