@@ -1,41 +1,41 @@
 import os, sys
-import json, random
+import json, ujson
+import random
 import numpy as np
 import glob
 import ntpath
 import pandas as pd
+from datetime import date
 from collections import Counter
 from skmultilearn.model_selection import IterativeStratification
 
-## set these values appropriately...
 
-## FPL Components ##
-# S3_IMG_BUCKET = 's3://ai-labeling/FPL/thermal/rgb_labeled/' ## where images will be stored
-# DATA_DIR = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/' 
-# LAB_DIR = DATA_DIR + 'labels/' ## local path where all labels files are
-# NAMES_FILE = DATA_DIR + 'coco.names' ## optional class names file
-# MANIFEST_FILE = DATA_DIR + 'manifest.txt' ## where to save manifest locally
+''' Set these file paths appropriately... This example is for NextEra Construction.... '''
 
-## FPL Thermal w/ RGB ##
-S3_IMG_BUCKET = 's3://ai-secure-sagemaker-bucket/job_resources/distribution_poles_rgb_fpl/images/' ## where images will be stored
-# DATA_DIR = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/' 
-LAB_DIR = '/home/david/code/repo/ai_docker/datasets/fpl/component/labels_filt/' ## local path where all labels files are
-NAMES_FILE = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/coco.names' ## optional class names file
-MANIFEST_FILE = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/manifests/component/rgb_augmented/manifest.txt' ## where to save manifest locally
+S3_IMG_BUCKET   = 's3://ai-labeling/NextEraConstruction/components_feb_05_2021/Imagery/'
+S3_LABEL_BUCKET = 's3://ai-labeling/NextEraConstruction/components_feb_05_2021/completed-labels'
 
-## NextEra Construction ##
-# S3_IMG_BUCKET = 's3://ai-labeling/NextEraConstruction/components_feb_05_2021/Imagery/'
-# DATA_DIR = '/home/david/code/repo/ai_docker/datasets/nextera/construction/'
-# LAB_DIR = DATA_DIR + 'labels/' ## local path where all labels files are
-# NAMES_FILE = DATA_DIR + 'coco.names' ## optional class names file
-# MANIFEST_FILE = DATA_DIR + 'manifest.txt' ## where to save manifest locally
+'''
+I will usually just manually download all labels from S3 bucket to local ./labels directory...
 
-## TRAIN/TEST/VAL split... 
-## ** don't need to normalize, just give *relative* weightings **
-## the code will normalize so sum()==1
+in this example:
+    aws s3 sync s3://ai-labeling/NextEraConstruction/components_feb_05_2021/completed-labels ./labels
+'''
+
+DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/nextera/construction/mantest/' ## local save directory
+LABEL_DIR       = DATA_DIR + 'labels/' ## local path where all labels files are located
+CLASSES_FILE    = DATA_DIR + 'Constructionclasses.txt' ## optional class names file
+CATEGORIES_FILE = DATA_DIR + 'categories.json' ## where to save categories file locally
+MANIFEST_FILE   = DATA_DIR + 'manifest.txt' ## where to save manifest file locally
+
+'''
+TRAIN/TEST/VAL split... 
+** don't need to normalize, just give *relative* weightings **
+the code will normalize so sum()==1
+'''
 SPLITS = [22,3,3]
 
-## ability to filter out certain classes
+''' ability to filter out certain classes '''
 BLACKLIST = None
 # BLACKLIST = [2, 3, 5, 7, 15, 17, 19, 22, 23]
     
@@ -49,7 +49,7 @@ def path_leaf(path):
 def read_lines(fn):
     with open(fn, 'r') as f:
         lines = [n.strip() for n in f.readlines()]
-    return lines
+    return [line for line in lines if len(line)>0]
 
 def get_labels(fn, blacklist=None):
     with open(fn, 'r') as f:
@@ -70,7 +70,7 @@ def get_labels(fn, blacklist=None):
 def label_matrix(lab_files):
     Y = []
     for lf in lab_files:
-        f = LAB_DIR + lf
+        f = LABEL_DIR + lf
         labs = get_labels(f)
         Y.append([y[0] for y in labs])
     n = max([max(y) for y in Y if len(y)>0]) + 1
@@ -110,7 +110,7 @@ def train_test_val_split(X, Y, splits, order=2):
     return train_set, test_set, val_set
 
 def build_json_string(x, name='train', blacklist=None):
-    label_file = LAB_DIR + x
+    label_file = LABEL_DIR + x
     y = get_labels(label_file, blacklist)
     s3url = S3_IMG_BUCKET + x.replace('.txt','.jpg')
         
@@ -127,10 +127,52 @@ def build_set(X_files, name='train', blacklist=None):
         entries.append(e)
     return entries
 
-def build_manifest():
-        
+def make_categories():
+    if not os.path.exists(CLASSES_FILE):
+        print(f'{CLASSES_FILE} not found.  Cannot make categories.json')
+        return
+    
+    classes = np.array(read_lines(CLASSES_FILE))
+    categories = []
+    class_ids = {}
+    
+    # Supercategory name.... currently not used, but possible in future....
+    supercategory = "Component"
+    
+    for i, class_name in enumerate(classes):
+        categories.append({
+            "id": i + 1,
+            "name": class_name,
+            "supercategory": supercategory
+        })
+        class_ids[class_name] = i
+    today = date.today()
+    coco_json = {
+        "info": {
+            "description": "",
+            "url": "",
+            "version": "1.0",
+            "year": today.strftime("%Y"),
+            "contributor": "me",
+            "date_created": today.strftime("%Y/%m/%e")
+        },
+        "licenses": [
+            {
+                "url": "",
+                "id": "12345678",
+                "name": "Development"
+            }
+        ],
+        "images": [],
+        "annotations": [],
+        "categories": categories
+    }
+    with open(CATEGORIES_FILE, 'w') as f:
+        f.write(ujson.dumps(coco_json))
+
+def make_manifest():  
     ## load all labels
-    lab_files = [path_leaf(f) for f in glob.glob('{}*.txt'.format(LAB_DIR))]
+    lab_files = [path_leaf(f) for f in glob.glob('{}*.txt'.format(LABEL_DIR))]
     random.shuffle(lab_files)
     X = np.array(lab_files)[:,None]
     Y = label_matrix(lab_files)
@@ -159,8 +201,8 @@ def build_manifest():
     
     ## get class names
     nc = y_train.shape[1]
-    if os.path.exists(NAMES_FILE):
-        names = np.array(read_lines(NAMES_FILE))
+    if os.path.exists(CLASSES_FILE):
+        names = np.array(read_lines(CLASSES_FILE))
     else:
         names = np.arange(nc)
     
@@ -188,7 +230,7 @@ def build_manifest():
 
 
 if __name__ == "__main__":
-    
-    build_manifest()
+    make_manifest()
+    make_categories()
     print('Done!')
     

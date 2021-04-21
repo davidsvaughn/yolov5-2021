@@ -37,35 +37,44 @@ import boto3
 
 logger = logging.getLogger(__name__)
 
-S3_CLIENT = None
+s3_client    = None
+first_upload = True
 
 def upload_model(opt):
-    global S3_CLIENT
+    global s3_client, first_upload
 
     if len(opt.weights_path)==0:
         return # params not passed in
 
-    if S3_CLIENT is None:
-        S3_CLIENT = boto3.client("s3")
+    if s3_client is None:
+        s3_client = boto3.client("s3")
 
-    if os.path.exists(opt.weights_path):
+    if len(opt.weights_path)>0 and os.path.exists(opt.weights_path):
         logger.info(f"Uploading {opt.weights_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/weights.pt")
-        S3_CLIENT.upload_file(opt.weights_path, opt.s3_bucket, f"{opt.s3_prefix}/weights.pt")
+        s3_client.upload_file(opt.weights_path, opt.s3_bucket, f"{opt.s3_prefix}/weights.pt")
     else:
         logger.info(f"File does not exist: {opt.weights_path}")
 
-    if os.path.exists(opt.categories_path):
-        logger.info(f"Uploading {opt.categories_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/categories.json")
-        S3_CLIENT.upload_file(opt.categories_path, opt.s3_bucket, f"{opt.s3_prefix}/categories.json")
-    else:
-        logger.info(f"File does not exist: {opt.categories_path}")
+    if first_upload:
+        if len(opt.categories_path)>0 and os.path.exists(opt.categories_path):
+            logger.info(f"Uploading {opt.categories_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/categories.json")
+            s3_client.upload_file(opt.categories_path, opt.s3_bucket, f"{opt.s3_prefix}/categories.json")
+        else:
+            logger.info(f"File does not exist: {opt.categories_path}")
 
-    if os.path.exists(opt.hyp_path):
-        logger.info(f"Uploading {opt.hyp_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/hyp.yaml")
-        S3_CLIENT.upload_file(opt.hyp_path, opt.s3_bucket, f"{opt.s3_prefix}/hyp.yaml")
-    else:
-        logger.info(f"File does not exist: {opt.hyp_path}")
+        if len(opt.hyp_path)>0 and os.path.exists(opt.hyp_path):
+            logger.info(f"Uploading {opt.hyp_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/hyp.yaml")
+            s3_client.upload_file(opt.hyp_path, opt.s3_bucket, f"{opt.s3_prefix}/hyp.yaml")
+        else:
+            logger.info(f"File does not exist: {opt.hyp_path}")
 
+        if len(opt.manifest_path)>0 and os.path.exists(opt.manifest_path):
+            logger.info(f"Uploading {opt.manifest_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/manifest.txt")
+            s3_client.upload_file(opt.manifest_path, opt.s3_bucket, f"{opt.s3_prefix}/manifest.txt")
+        else:
+            logger.info(f"File does not exist: {opt.manifest_path}")
+    
+    first_upload = False
     logger.info('All artifacts uploaded!')
     
 
@@ -568,6 +577,7 @@ if __name__ == '__main__':
     parser.add_argument('--weights_path', type=str, default='', help='weights_path')
     parser.add_argument('--hyp_path', type=str, default='', help='hyp_path')
     parser.add_argument('--categories_path', type=str, default='', help='categories_path')
+    parser.add_argument('--manifest_path', type=str, default='', help='manifest_path')
     opt = parser.parse_args()
 
     # Set DDP variables
