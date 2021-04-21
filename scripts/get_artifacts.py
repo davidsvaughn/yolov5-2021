@@ -61,7 +61,7 @@ def download_s3_file(s3_url, dst_dir=DATA_DIR, filename=None, silent=False, over
     except Exception as e:
         # Print the URL of the failed file and re-raise the exception.
         print(f"Failed to download file from S3: {s3_url}")
-        raise e
+        # raise e
 
 def parse_manifest(manifest_path):
     # Initialize train/val/test sets.
