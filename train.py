@@ -489,6 +489,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
             # Upload best model to s3
             if epoch>25 and epoch%10==0:
                 if new_best_model:
+                    strip_optimizer(best)
                     upload_model(opt)
                     new_best_model = False
 
@@ -498,9 +499,11 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     if rank in [-1, 0]:
         # Strip optimizers
         final = best if best.exists() else last  # final model
-        for f in last, best:
-            if f.exists():
-                strip_optimizer(f)
+        if last.exists():
+            strip_optimizer(last)
+        if best.exists():
+            if new_best_model:
+                strip_optimizer(best)
         if opt.bucket:
             os.system(f'gsutil cp {final} gs://{opt.bucket}/weights')  # upload
 
