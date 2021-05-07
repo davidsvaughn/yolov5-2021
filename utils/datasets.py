@@ -686,6 +686,15 @@ def save_np(x, f, gray=True):
 def up(x):
     return (x*255).round().astype(np.uint8)
 
+def blur(x, k=3, mode=1):
+    k = 2*(k//2)+1
+    x = x.astype(np.uint8)[:, :, ::-1]
+    if mode==1:
+        x = cv2.blur(x, (k,k))
+    else:
+        x = cv2.GaussianBlur(x, (k,k), 1)
+    return x
+
 def augment_gray(img, p):
     if p==0:
         return img
@@ -695,33 +704,20 @@ def augment_gray(img, p):
     else:
         p=-p
         r2 = 1.0-(1.0-p)/2 - p*random.random()
-
     g = rgb2gray(img)*r2
     g = g + random.randint(0, int(255-g.max()))
-
     if r1==2: ## invert black/white
         g = 255-g
     g = repeat_channel(g)
-
-    # save_np(g, '/home/david/code/repo/ai_docker/datasets/fpl/component/zgray_{}.jpg'.format(random.randint(100,1000000000)))
-
-    return g
-
-    # im = Image.fromarray(g1).convert('L')
-    # colormaps = [mpl.cm.viridis,  mpl.cm.viridis_r, mpl.cm.jet_r]
-    # cmap = colormaps[random.randint(0,len(colormaps)-1)]
-    # cNorm = mpl.colors.Normalize(vmin=0, vmax=255)
-    # scalarMap = mtpltcm.ScalarMappable(norm=cNorm, cmap=cmap)
-    # rgb = up(scalarMap.to_rgba(im)[:,:,:3])
-    # # save_np(rgb, c1, False)
-
-    # g2 = rgb2gray(rgb)
-    # if r==3: return repeat_channel(g2)
-    # if r==4: return repeat_channel(255-g2)
-
-    # g2r = 255-g2
-    # save_np(g2, f3)
-    # save_np(g2r, f4)
+    ## blur
+    m = random.randint(1,2)
+    if m==1: ## kernel size
+        k = random.randint(2,4)
+    else: ## gaussian blur kernel size
+        k = random.randint(11,31)
+    g = blur(g, k, m)
+    ##
+    return g.astype(np.float64)
 
 def hist_equalize(img, clahe=True, bgr=False):
     # Equalize histogram on BGR image 'img' with img.shape(n,m,3) and range 0-255
