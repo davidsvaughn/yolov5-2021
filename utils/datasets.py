@@ -20,7 +20,7 @@ from PIL import Image, ExifTags
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from utils.general import xyxy2xywh, xywh2xyxy, xywhn2xyxy, xyn2xy, segment2box, segments2boxes, resample_segments, \
+from utils.general import xyxy2xywh, xywh2xyxy, xywhn2xyxy, xyxy2xywhn, xyn2xy, segment2box, segments2boxes, resample_segments, \
     clean_str
 from utils.torch_utils import torch_distributed_zero_first
 
@@ -529,39 +529,41 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             # Load mosaic
             img, labels = load_mosaic(self, index)
             shapes = None
-
             # MixUp https://arxiv.org/pdf/1710.09412.pdf
             if random.random() < hyp['mixup']:
                 img2, labels2 = load_mosaic(self, random.randint(0, self.n - 1))
                 r = np.random.beta(8.0, 8.0)  # mixup ratio, alpha=beta=8.0
                 img = (img * r + img2 * (1 - r)).astype(np.uint8)
                 labels = np.concatenate((labels, labels2), 0)
-
         else:
             # Load image
             img, (h0, w0), (h, w) = load_image(self, index)
+            labels = self.labels[index].copy()
+
+            #####################################
+            if self.crop>0:
+                img, (h,w), (x,y) = crop_image(img, self.img_size)
+                if labels.size:
+                    labels = crop_labels(labels, x, y, w, h, w0, h0)
+            #####################################
 
             # Letterbox
             shape = self.batch_shapes[self.batch[index]] if self.rect else self.img_size  # final letterboxed shape
             img, ratio, pad = letterbox(img, shape, auto=False, scaleup=self.perturb)
             shapes = (h0, w0), ((h / h0, w / w0), pad)  # for COCO mAP rescaling
 
-            labels = self.labels[index].copy()
             if labels.size:  # normalized xywh to pixel xyxy format
                 labels[:, 1:] = xywhn2xyxy(labels[:, 1:], ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1])
 
         if self.augment:
             # Augment imagespace
             if not mosaic and self.perturb:
-                if self.crop>0:
-                    img, labels = random_crop(img, labels, self.crop, self.crop)
-                else:
-                    img, labels = random_perspective(img, labels,
-                                                    degrees=hyp['degrees'],
-                                                    translate=hyp['translate'],
-                                                    scale=hyp['scale'],
-                                                    shear=hyp['shear'],
-                                                    perspective=hyp['perspective'])
+                img, labels = random_perspective(img, labels,
+                                                degrees=hyp['degrees'],
+                                                translate=hyp['translate'],
+                                                scale=hyp['scale'],
+                                                shear=hyp['shear'],
+                                                perspective=hyp['perspective'])
 
             # Augment colorspace
             if self.perturb:
@@ -648,12 +650,10 @@ def load_image(self, index):
     if img is None:  # not cached
         path = self.img_files[index]
         img = cv2.imread(path)  # BGR
-        #######################
-        # img = cv2.transpose(img)
-        #######################
         assert img is not None, 'Image Not Found ' + path
         h0, w0 = img.shape[:2]  # orig hw
-        r = self.img_size / max(h0, w0)  # resize image to img_size
+        sz = self.crop if self.crop>0 else self.img_size
+        r = sz / max(h0, w0)  # resize image to img_size
         if r != 1:  # always resize down, only resize up if training with augmentation
             interp = cv2.INTER_AREA if r < 1 and not self.augment else cv2.INTER_LINEAR
             img = cv2.resize(img, (int(w0 * r), int(h0 * r)), interpolation=interp)
@@ -745,7 +745,15 @@ def load_mosaic(self, index):
     indices = [index] + [self.indices[random.randint(0, self.n - 1)] for _ in range(3)]  # 3 additional image indices
     for i, index in enumerate(indices):
         # Load image
-        img, _, (h, w) = load_image(self, index)
+        img, (h0,w0), (h,w) = load_image(self, index)
+        labels, segments = self.labels[index].copy(), self.segments[index].copy()
+
+        ########################################################
+        if self.crop>0:
+            img, (h,w), (x,y) = crop_image(img, self.img_size)
+            if labels.size:
+                labels = crop_labels(labels, x, y, w, h, w0, h0)
+        ########################################################
 
         # place img in img4
         if i == 0:  # top left
@@ -770,7 +778,7 @@ def load_mosaic(self, index):
         padh = y1a - y1b
 
         # Labels
-        labels, segments = self.labels[index].copy(), self.segments[index].copy()
+        # labels, segments = self.labels[index].copy(), self.segments[index].copy()
         if labels.size:
             labels[:, 1:] = xywhn2xyxy(labels[:, 1:], w, h, padw, padh)  # normalized xywh to pixel xyxy format
             segments = [xyn2xy(x, w, h, padw, padh) for x in segments]
@@ -922,13 +930,34 @@ def letterbox(img, new_shape=(640, 640), color=(114, 114, 114), auto=True, scale
     img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
     return img, ratio, (dw, dh)
 
-def random_crop(img, targets, w, h):
+def crop_image(img, img_size):
+    h0, w0 = img.shape[:2]
+    r = img_size / max(h0, w0)
+    x,y = 0,0
+    if r != 1:
+        w,h = int(w0*r), int(h0*r)
+        img, (x,y) = random_crop_image(img, w, h)
+    return img, img.shape[:2], (x,y)
+
+def crop_labels(targets, x, y, w, h, w0, h0):
+    n = len(targets)
+    if n:
+        labs0 = targets[:,1:5]
+        labs0 = xywhn2xyxy(labs0, w0, h0) ## convert to pixel xyxy format
+        labs = labs0 - [x,y,x,y] ## subtract top left corner
+        labs = labs.clip([0,0,0,0], [w,h,w,h]) ## clip by new w,h
+        i = box_candidates(box1=labs0.T, box2=labs.T, area_thr=0.25, wh_thr=3, ar_thr=1.5) ## filter candidates
+        labs = xyxy2xywhn(labs, w, h)
+        targets = targets[i]
+        targets[:, 1:5] = labs[i]
+    return targets
+
+def random_crop_image_label(img, targets, w, h):
     assert img.shape[0] >= h
     assert img.shape[1] >= w
     x = random.randint(0, img.shape[1] - w)
     y = random.randint(0, img.shape[0] - h)
     img = img[y:y+h, x:x+w, :]
-
     n = len(targets)
     if n:
         labs = targets[:,1:5] - [x,y,x,y]
@@ -937,8 +966,14 @@ def random_crop(img, targets, w, h):
         i = box_candidates(box1=targets[:, 1:5].T, box2=labs.T, area_thr=0.25, wh_thr=3, ar_thr=1.5)
         targets = targets[i]
         targets[:, 1:5] = labs[i]
-
     return img, targets
+
+def random_crop_image(img, w, h):
+    assert img.shape[0] >= h
+    assert img.shape[1] >= w
+    x = random.randint(0, img.shape[1] - w)
+    y = random.randint(0, img.shape[0] - h)
+    return img[y:y+h, x:x+w, :], (x,y)
 
 def random_perspective(img, targets=(), segments=(), degrees=10, translate=.1, scale=.1, shear=10, perspective=0.0,
                        border=(0, 0)):
