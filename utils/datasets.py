@@ -540,12 +540,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             img, (h0, w0), (h, w) = load_image(self, index)
             labels = self.labels[index].copy()
 
-            #####################################
             if self.crop>0:
-                img, (h,w), (x,y) = crop_image(img, self.img_size)
-                if labels.size:
-                    labels = crop_labels(labels, x, y, w, h, w0, h0)
-            #####################################
+                img, labels, (h,w) = random_crop_image_labels(img, labels, self.img_size, buf=50)
 
             # Letterbox
             shape = self.batch_shapes[self.batch[index]] if self.rect else self.img_size  # final letterboxed shape
@@ -748,12 +744,8 @@ def load_mosaic(self, index):
         img, (h0,w0), (h,w) = load_image(self, index)
         labels, segments = self.labels[index].copy(), self.segments[index].copy()
 
-        ########################################################
         if self.crop>0:
-            img, (h,w), (x,y) = crop_image(img, self.img_size)
-            if labels.size:
-                labels = crop_labels(labels, x, y, w, h, w0, h0)
-        ########################################################
+            img, labels, (h,w) = random_crop_image_labels(img, labels, self.img_size, buf=50)
 
         # place img in img4
         if i == 0:  # top left
@@ -930,6 +922,67 @@ def letterbox(img, new_shape=(640, 640), color=(114, 114, 114), auto=True, scale
     img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
     return img, ratio, (dw, dh)
 
+def random_crop_image_labels(img, targets, img_size, buf=50):
+    h1, w1 = img.shape[:2]
+    r = img_size / max(h1, w1)
+    w,h = int(w1*r), int(h1*r)
+    w = h = max(w,h) ## crop square
+    # img, (x,y) = random_crop_image(img, w, h)
+    h = min(h, img.shape[0])
+    w = min(w, img.shape[1])
+    xa, xb = 0, max(0, img.shape[1]-w)
+    ya, yb = 0, max(0, img.shape[0]-h)
+    ## use labels to guide random cropping...
+    n = len(targets)
+    if n:
+        labs0 = targets[:,1:5]
+        labs0 = xywhn2xyxy(labs0, w1, h1) ## convert to pixel xyxy format
+        xy1, xy2 = labs0[:,:2].min(0), labs0[:,2:].max(0)
+        bx, by = (xy2-xy1)
+        mx, my = xy1
+        nx, ny = xy2
+
+        xa, ya = max(0,mx-buf), max(0,my-buf)
+        xb, yb = min(w1,nx+buf), min(h1,ny+buf)
+
+        xx1 = max(0, xb-w)
+        if xx1>xa:
+            xx1, xx2 = xa, xx1 
+        else:
+            xgap = w1-(xx1+w)
+            if xx1+xgap<xa:
+                xx2 = xx1+xgap
+            else:
+                xx2 = xa
+
+        yy1 = max(0, yb-h)
+        if yy1>ya:
+            yy1, yy2 = ya, yy1
+        else:
+            ygap = h1-(yy1+h)
+            if yy1+ygap<ya:
+                yy2 = yy1+ygap
+            else:
+                yy2 = ya
+
+        xa,xb = int(xx1), int(xx2)
+        ya,yb = int(yy1), int(yy2)
+    ###############################
+
+    x = random.randint(xa, xb)
+    y = random.randint(ya, yb)
+    img = img[y:y+h, x:x+w, :]
+
+    ## crop labels...
+    if n:
+        labs = labs0 - [x,y,x,y] ## subtract top left corner
+        labs = labs.clip([0,0,0,0], [w,h,w,h]) ## clip by new w,h
+        i = box_candidates(box1=labs0.T, box2=labs.T, area_thr=0.25, wh_thr=3, ar_thr=1.5) ## filter candidates
+        labs = xyxy2xywhn(labs, w, h)
+        targets = targets[i]
+        targets[:, 1:5] = labs[i]
+    return img, targets, img.shape[:2]
+
 def crop_image(img, img_size):
     h0, w0 = img.shape[:2]
     r = img_size / max(h0, w0)
@@ -951,22 +1004,6 @@ def crop_labels(targets, x, y, w, h, w0, h0):
         targets = targets[i]
         targets[:, 1:5] = labs[i]
     return targets
-
-def random_crop_image_label(img, targets, w, h):
-    assert img.shape[0] >= h
-    assert img.shape[1] >= w
-    x = random.randint(0, img.shape[1] - w)
-    y = random.randint(0, img.shape[0] - h)
-    img = img[y:y+h, x:x+w, :]
-    n = len(targets)
-    if n:
-        labs = targets[:,1:5] - [x,y,x,y]
-        labs = labs.clip([0,0,0,0], [w,h,w,h])
-        # filter candidates
-        i = box_candidates(box1=targets[:, 1:5].T, box2=labs.T, area_thr=0.25, wh_thr=3, ar_thr=1.5)
-        targets = targets[i]
-        targets[:, 1:5] = labs[i]
-    return img, targets
 
 def random_crop_image(img, w, h):
     assert img.shape[0] >= h
@@ -1071,8 +1108,8 @@ def box_candidates(box1, box2, wh_thr=2, ar_thr=20, area_thr=0.1, eps=1e-16):  #
     # aspect ratio
     # ar = np.maximum(w2 / (h2 + eps), h2 / (w2 + eps))
     ww, hh = np.array([w1, w2]), np.array([h1, h2])
-    ar = ww/(hh+eps)
-    arr = ar.max(0)/ar.min(0) # aspect ratio ratio
+    ar = ww/(hh + eps)
+    arr = ar.max(0)/(ar.min(0) + eps) # aspect ratio ratio
     # return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
     return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (arr < ar_thr)  # candidates
 
