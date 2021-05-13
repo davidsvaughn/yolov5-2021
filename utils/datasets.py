@@ -357,9 +357,12 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
         self.augment = augment
         self.perturb = augment
+        self.crop = 0
         if hyp is not None:
             if hyp.get('augment_gray') and hyp['augment_gray']!=0:
                 self.augment = True
+            if hyp.get('crop') and hyp['crop']>0:
+                self.crop = hyp['crop']
 
         try:
             f = []  # image files
@@ -550,12 +553,15 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         if self.augment:
             # Augment imagespace
             if not mosaic and self.perturb:
-                img, labels = random_perspective(img, labels,
-                                                 degrees=hyp['degrees'],
-                                                 translate=hyp['translate'],
-                                                 scale=hyp['scale'],
-                                                 shear=hyp['shear'],
-                                                 perspective=hyp['perspective'])
+                if self.crop>0:
+                    img, labels = random_crop(img, labels, self.crop, self.crop)
+                else:
+                    img, labels = random_perspective(img, labels,
+                                                    degrees=hyp['degrees'],
+                                                    translate=hyp['translate'],
+                                                    scale=hyp['scale'],
+                                                    shear=hyp['shear'],
+                                                    perspective=hyp['perspective'])
 
             # Augment colorspace
             if self.perturb:
@@ -916,6 +922,23 @@ def letterbox(img, new_shape=(640, 640), color=(114, 114, 114), auto=True, scale
     img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
     return img, ratio, (dw, dh)
 
+def random_crop(img, targets, w, h):
+    assert img.shape[0] >= h
+    assert img.shape[1] >= w
+    x = random.randint(0, img.shape[1] - w)
+    y = random.randint(0, img.shape[0] - h)
+    img = img[y:y+h, x:x+w, :]
+
+    n = len(targets)
+    if n:
+        labs = targets[:,1:5] - [x,y,x,y]
+        labs = labs.clip([0,0,0,0], [w,h,w,h])
+        # filter candidates
+        i = box_candidates(box1=targets[:, 1:5].T, box2=labs.T, area_thr=0.25, wh_thr=3, ar_thr=1.5)
+        targets = targets[i]
+        targets[:, 1:5] = labs[i]
+
+    return img, targets
 
 def random_perspective(img, targets=(), segments=(), degrees=10, translate=.1, scale=.1, shear=10, perspective=0.0,
                        border=(0, 0)):
@@ -1010,8 +1033,13 @@ def box_candidates(box1, box2, wh_thr=2, ar_thr=20, area_thr=0.1, eps=1e-16):  #
     # Compute candidate boxes: box1 before augment, box2 after augment, wh_thr (pixels), aspect_ratio_thr, area_ratio
     w1, h1 = box1[2] - box1[0], box1[3] - box1[1]
     w2, h2 = box2[2] - box2[0], box2[3] - box2[1]
-    ar = np.maximum(w2 / (h2 + eps), h2 / (w2 + eps))  # aspect ratio
-    return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
+    # aspect ratio
+    # ar = np.maximum(w2 / (h2 + eps), h2 / (w2 + eps))
+    ww, hh = np.array([w1, w2]), np.array([h1, h2])
+    ar = ww/(hh+eps)
+    arr = ar.max(0)/ar.min(0) # aspect ratio ratio
+    # return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
+    return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (arr < ar_thr)  # candidates
 
 
 def cutout(image, labels):
