@@ -226,6 +226,11 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     nl = model.model[-1].nl  # number of detection layers (used for scaling hyp['obj'])
     imgsz, imgsz_test = [check_img_size(x, gs) for x in opt.img_size]  # verify imgsz are gs-multiples
 
+    # Crop size
+    if hyp.get('crop') and hyp['crop']>0:
+        hyp['crop'] = check_img_size(hyp['crop'], gs)
+        imgsz_test = hyp['crop']
+
     # DP mode
     if cuda and rank == -1 and torch.cuda.device_count() > 1:
         model = torch.nn.DataParallel(model)

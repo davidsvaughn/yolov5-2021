@@ -272,7 +272,7 @@ def test(data,
 
                     if len(pred) == 0:
                         if nl:
-                            stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
+                            nms_stats[hi].append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
                         continue
 
                     # Predictions
@@ -315,14 +315,15 @@ def test(data,
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
+    conf_best = -1
     if len(stats) and stats[0].any():
         mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
     else:
         nt = torch.zeros(1)
 
     # Print results
-    print('Optimal Confidence Threshold: {0:0.3f}'.format(conf_best))
-    pf = '%30s' + '%12.3g' * 7  # print format
+    maxlen = max([len(s) for s in names])
+    pf = f'%{maxlen+2}s' + '%12.3g' * 7  # print format
     print(pf % ('all', seen, nt.sum(), mp, mr, mf1, map50, map))
 
     # Print results per class
@@ -330,6 +331,9 @@ def test(data,
     if (verbose or nc < 50) and nc > 1 and len(stats):
         for i, c in enumerate(ap_class):
             print(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i]))
+    if conf_best>-1:
+        print('\nOptimal Confidence Threshold: {0:0.3f}'.format(conf_best))
+        print('Optimal Confidence Thresholds (Per-Class): {}'.format(list(cc.round(3))))
 
     ## helper for finding best NMS params....
     def update(k,V,P,v,p):
