@@ -650,9 +650,12 @@ def load_image(self, index):
         h0, w0 = img.shape[:2]  # orig hw
         sz = self.crop if self.crop>0 else self.img_size
         r = sz / max(h0, w0)  # resize image to img_size
-        if r != 1:  # always resize down, only resize up if training with augmentation
+
+        # if r != 1:  # always resize down, only resize up if training with augmentation
+        if r<1:
             interp = cv2.INTER_AREA if r < 1 and not self.augment else cv2.INTER_LINEAR
             img = cv2.resize(img, (int(w0 * r), int(h0 * r)), interpolation=interp)
+
         return img, (h0, w0), img.shape[:2]  # img, hw_original, hw_resized
     else:
         return self.imgs[index], self.img_hw0[index], self.img_hw[index]  # img, hw_original, hw_resized
