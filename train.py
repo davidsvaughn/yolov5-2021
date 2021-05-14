@@ -34,6 +34,7 @@ from utils.loss import ComputeLoss
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 import boto3
+import gc
 
 logger = logging.getLogger(__name__)
 
@@ -334,6 +335,10 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         # Update mosaic border
         # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
         # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
+
+        ## clear CUDA cache...
+        gc.collect()
+        torch.cuda.empty_cache()
 
         mloss = torch.zeros(4, device=device)  # mean losses
         if rank != -1:
