@@ -9,36 +9,52 @@ from datetime import date
 from collections import Counter
 from skmultilearn.model_selection import IterativeStratification
 
+''' ability to filter out certain classes '''
+BLACKLIST = None
 
 ''' Set these file paths appropriately... This example is for NextEra Construction.... '''
 
-S3_IMG_BUCKET   = 's3://ai-labeling/NextEraConstruction/components_feb_05_2021/Imagery/'
-S3_LABEL_BUCKET = 's3://ai-labeling/NextEraConstruction/components_feb_05_2021/completed-labels'
+# S3_IMG_BUCKET   = 's3://ai-labeling/NextEraConstruction/components_feb_05_2021/Imagery/'
+# S3_LABEL_BUCKET = 's3://ai-labeling/NextEraConstruction/components_feb_05_2021/completed-labels'
 
-'''
-I will usually just manually download all labels from S3 bucket to local ./labels directory...
+# '''
+# I will usually just manually download all labels from S3 bucket to local ./labels directory...
 
-in this example:
-    aws s3 sync s3://ai-labeling/NextEraConstruction/components_feb_05_2021/completed-labels ./labels
-'''
+# in this example:
+#     aws s3 sync s3://ai-labeling/NextEraConstruction/components_feb_05_2021/completed-labels ./labels
+# '''
 
-DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/nextera/construction/mantest/' ## local save directory
+# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/nextera/construction/mantest/' ## local save directory
+# LABEL_DIR       = DATA_DIR + 'labels/' ## local path where all labels files are located
+# CLASSES_FILE    = DATA_DIR + 'Constructionclasses.txt' ## optional class names file
+# CATEGORIES_FILE = DATA_DIR + 'categories.json' ## where to save categories file locally
+# MANIFEST_FILE   = DATA_DIR + 'manifest.txt' ## where to save manifest file locally
+
+## thermal hotspot
+# S3_IMG_BUCKET   = 's3://ai-secure-sagemaker-bucket/job_resources/distribution_poles_thermal_fpl2/images/'
+# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/models/damages/hotspot/data/' ## local save directory
+# LABEL_DIR       = DATA_DIR + 'labels/' ## local path where all labels files are located
+# CLASSES_FILE    = DATA_DIR + 'coco.names' ## optional class names file
+# CATEGORIES_FILE = DATA_DIR + 'categories.json' ## where to save categories file locally
+# MANIFEST_FILE   = DATA_DIR + 'manifest.txt' ## where to save manifest file locally
+
+## thermal component
+S3_IMG_BUCKET   = 's3://ai-labeling/FPL/thermal/rgb_labeled/'
+DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/models/damages/fpl-thermdamage-3/' ## local save directory
 LABEL_DIR       = DATA_DIR + 'labels/' ## local path where all labels files are located
-CLASSES_FILE    = DATA_DIR + 'Constructionclasses.txt' ## optional class names file
+CLASSES_FILE    = DATA_DIR + 'coco.names' ## optional class names file
 CATEGORIES_FILE = DATA_DIR + 'categories.json' ## where to save categories file locally
 MANIFEST_FILE   = DATA_DIR + 'manifest.txt' ## where to save manifest file locally
+BLACKLIST = [2, 3, 5, 7, 15, 17, 19, 22, 23]
+
 
 '''
 TRAIN/TEST/VAL split... 
 ** don't need to normalize, just give *relative* weightings **
 the code will normalize so sum()==1
 '''
-SPLITS = [22,3,3]
+SPLITS = [20,5,5]
 
-''' ability to filter out certain classes '''
-BLACKLIST = None
-# BLACKLIST = [2, 3, 5, 7, 15, 17, 19, 22, 23]
-    
 
 ################################################################
 
@@ -74,6 +90,8 @@ def label_matrix(lab_files):
         labs = get_labels(f)
         Y.append([y[0] for y in labs])
     n = max([max(y) for y in Y if len(y)>0]) + 1
+    if BLACKLIST is not None and len(BLACKLIST)>0:
+        n = max(n, max(BLACKLIST)+1)
     Z = []
     for y in Y:
         z = np.zeros(n)
@@ -118,7 +136,7 @@ def build_json_string(x, name='train', blacklist=None):
          'annotations' : y,
          'datasets' : [name]
          }
-    return json.dumps(s).replace("/", "\\/").replace(' ','')
+    return json.dumps(s).replace("/", "\\/")#.replace(' ','')
     
 def build_set(X_files, name='train', blacklist=None):
     entries = []
@@ -170,7 +188,8 @@ def make_categories():
     with open(CATEGORIES_FILE, 'w') as f:
         f.write(ujson.dumps(coco_json))
 
-def make_manifest():  
+def make_manifest():
+    global Y
     ## load all labels
     lab_files = [path_leaf(f) for f in glob.glob('{}*.txt'.format(LABEL_DIR))]
     random.shuffle(lab_files)

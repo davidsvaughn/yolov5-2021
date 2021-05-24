@@ -4,21 +4,54 @@ import random
 import glob
 import boto3
 import ntpath
+import numpy as np
 from concurrent.futures.thread import ThreadPoolExecutor
 from json.decoder import JSONDecodeError
 from manifest_entry import ManifestEntry
 from inference_response import COCOCategory
 
+LABEL_FILTER = None
+S3_FILTER = None
 '''
 Use this file to download saved model artifacts (and data) after a training run... 
 It will arrange the files in the same structure as 'training_start.py' script in ai_docker.
 '''
-
 ''' Set the following 3 file paths appropriately.... This example is for FPL Thermal Damage... '''
 
-DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/models/damages/fpl-thermdamage-1'
-MANIFEST_URL    = 's3://ai-labeling/FPL/thermal/damage/manifest.txt'
-MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-thermdamage-1/'
+## FPL Thermal Damage...
+# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/models/damages/fpl-thermdamage-3'
+# MANIFEST_URL    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-thermdamage-3/manifest.txt'
+# MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-thermdamage-3/'
+
+## FPL Thermal Hotspot
+# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/models/damages/hotspot/data'
+# MANIFEST_URL    = 's3://ph-dvaughn-dev/fpl_thermal_hotspot/manifest.txt'
+# MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-thermal-hotspot-1/'
+
+## FPL RGB Component - March-29
+# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/component'
+# MANIFEST_URL    = 's3://ai-labeling/FPL/components/march_29th_2021/machine_labeled_fci_compression_splice/model_training_files/manifest.txt'
+# MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/march-29-yolo-L-components/'
+
+## FPL RGB Component - April-22
+DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/component'
+MANIFEST_URL    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/April-22-yolo-L-components-augmentation/manifest.txt'
+MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/April-22-yolo-L-components-augmentation/'
+
+## FPL RGB Damage
+# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/damage/rgb/may11'
+# MANIFEST_URL    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-component-damage-may11/manifest.txt'
+# MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-component-damage-may11/'
+# LABEL_FILTER = [0,2,4,8]
+# LABEL_FILTER = [6]
+
+## FPL RGB Damage
+# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/damage/rgb/stage1b'
+# MANIFEST_URL    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-rgb-damage-stage1b-large/manifest.txt'
+# MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-rgb-damage-stage1b-large/'
+# # LABEL_FILTER = [6,7,11,15,16,17,18,19,20]
+# S3_FILTER = ['original-labels'] # must contain AT LEAST ONE of list
+
 
 #-----------------------------------------------
 IMG_DIR = '{}/images'.format(DATA_DIR)
@@ -33,6 +66,9 @@ if MODEL_BUCKET:
 
 s3_client = boto3.client('s3')
 boto3.setup_default_session(profile_name='ph-ai-dev')  # To switch between different AWS accounts
+
+if LABEL_FILTER is not None:
+    LABEL_FILTER = np.array(LABEL_FILTER)
 
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
@@ -122,6 +158,26 @@ def download_images(img_set):
     for entry in img_set:
         executor.submit(download_image, entry)
     executor.shutdown(wait=True)
+
+def filter_labels(img_set):
+    new_set = []
+    for entry in img_set:
+        if len(entry.annotations)==0:
+            continue
+        y = np.array(entry.annotations)[:,0]
+        if not np.in1d(y, LABEL_FILTER).any():
+            continue
+        new_set.append(entry)
+    return new_set
+
+def filter_s3files(img_set):
+    new_set = []
+    for entry in img_set:
+        for s in S3_FILTER:
+            if s in entry.s3Url:
+                new_set.append(entry)
+                break
+    return new_set
         
 def write_labels(img_set, lab_dir=LAB_DIR, overwrite=True):
     for entry in img_set:
@@ -187,20 +243,19 @@ if __name__ == "__main__":
     img_sets = []
     img_sets.append((test_set, 'test'))
     img_sets.append((val_set, 'val'))
-    
-    ''' skipping train set.... usually very large '''
-    # img_sets.append((train_set, 'train'))
+    img_sets.append((train_set, 'train')) ## skipping train set.... usually very large
     
     for img_set in img_sets:
         img_set, name = img_set
-        random.shuffle(img_set)
+        # random.shuffle(img_set)
         
-        N = 0
-        if N>0:
-            random.shuffle(img_set)
-            img_set = img_set[:N]
+        if LABEL_FILTER is not None:
+            img_set = filter_labels(img_set)
         
-        print('Downloading {} set...'.format(name))
+        if S3_FILTER is not None:
+            img_set = filter_s3files(img_set)
+        
+        print(f'Downloading {name} set... {len(img_set)} images...')
         download_images(img_set)
         print('...done.')
         
@@ -208,6 +263,7 @@ if __name__ == "__main__":
         img_files = [path_leaf(f) for f in glob.glob('{}/*.[jJ][pP][gG]'.format(IMG_DIR))]
         img_set = [e for e in img_set if e.image_file_name() in img_files]
         
+        ## save image filenames to file
         write_labels(img_set)
         img_set_path = f'{DATA_DIR}/{name}.txt'
         write_set(img_set_path, img_set)

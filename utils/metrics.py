@@ -105,10 +105,12 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
 
     ## unweighted averages (across classes)...
     # mp_1, mr_1, map50_1, map_1, mf1_1 = p.mean(), r.mean(), ap50.mean(), ap.mean(), f1.mean()
-    # ## weighted average (by # targets per class)...
+    
+    ## weighted average (by # targets per class)...
     mp_2, mr_2, map50_2, map_2, mf1_2 = np.average(p, weights=wt), np.average(r, weights=wt), np.average(ap50, weights=wt), np.average(ap, weights=wt), np.average(f1, weights=wt)\
 
-    mp, mr, mf1, map50, map = mp_0, mr_0, mf1_0, map50_2, map_2
+    # mp, mr, mf1, map50, map = mp_0, mr_0, mf1_0, map50_2, map_2
+    mp, mr, mf1, map50, map = mp_2, mr_2, mf1_2, map50_2, map_2
 
     return mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1_i0, cc)
 
