@@ -11,14 +11,11 @@ from . import general
 
 def fitness(x):
     # Model fitness as a weighted combination of metrics
-    w = np.array([0., 0., 5., 0., 5.])  # weights for [P, R, F1, mAP@0.5, mAP@0.5:0.95]
-    w = w / w.sum()
-    return (x[:, :5] * w).sum(1)
+    w = [0.0, 0.0, 0.1, 0.9]  # weights for [P, R, mAP@0.5, mAP@0.5:0.95]
+    return (x[:, :4] * w).sum(1)
 
-def closest_idx(a, b):
-    return abs(b[:, None] - a[None, :]).argmin(axis=-1)
 
-def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names=(), ct=None, max_by_class=False):
+def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names=()):
     """ Compute the average precision, given the recall and precision curves.
     Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
     # Arguments
@@ -39,9 +36,6 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
     # Find unique classes
     unique_classes = np.unique(target_cls)
     nc = unique_classes.shape[0]  # number of classes, number of detections
-
-    nt = np.bincount(target_cls.astype(np.int64), minlength=nc)  # number of targets per class
-    wt = nt[unique_classes.astype('int32')]
 
     # Create Precision-Recall curve and compute AP for each class
     px, py = np.linspace(0, 1, 1000), []  # for plotting
@@ -80,39 +74,8 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
         plot_mc_curve(px, p, Path(save_dir) / 'P_curve.png', names, ylabel='Precision')
         plot_mc_curve(px, r, Path(save_dir) / 'R_curve.png', names, ylabel='Recall')
 
-    ## PER CLASS F1 maximization
-    if ct is not None and isinstance(ct, list):
-        i0 = closest_idx(px, np.array(ct))
-        max_per_class = True
-    else:
-        i0 = f1.argmax(axis=1) # argmax_per_class
-    cc = px[i0]## class specific confidence thresholds
-
-    # per-class F1 maximization...
-    f1_i0 = f1[np.arange(len(i0)), i0]
-    p_i0 = p[np.arange(len(i0)), i0]
-    r_i0 = r[np.arange(len(i0)), i0]
-    mf1_0 = np.average(f1_i0, weights=wt)
-    mp_0 = np.average(p_i0, weights=wt)
-    mr_0 = np.average(r_i0, weights=wt)
-
-    ## average F1 maximization (w.r.t. weighted average)...
-    # i = f1.mean(0).argmax()  # max F1 index, unweighted average (averaged over all classes)
-    i = np.average(f1, 0, weights=wt).argmax()# max F1 index, weighted average (by # targets per class)
-    conf_best = px[i]
-    ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
-    p, r, f1, ap_class = p[:, i], r[:, i], f1[:, i], unique_classes.astype('int32')
-
-    ## weighted average (by # targets per class)...
-    mp_2, mr_2, mf1_2, map50, map = np.average(p, weights=wt), np.average(r, weights=wt), np.average(f1, weights=wt), np.average(ap50, weights=wt), np.average(ap, weights=wt)
-
-    if max_by_class:
-        mp, mr, mf1 = mp_0, mr_0, mf1_0
-        p, r, f1 = p_i0, r_i0, f1_i0
-    else:
-        mp, mr, mf1 = mp_2, mr_2, mf1_2
-
-    return mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc)
+    i = f1.mean(0).argmax()  # max F1 index
+    return p[:, i], r[:, i], ap, f1[:, i], unique_classes.astype('int32')
 
 
 def compute_ap(recall, precision):
@@ -182,14 +145,14 @@ class ConfusionMatrix:
         for i, gc in enumerate(gt_classes):
             j = m0 == i
             if n and sum(j) == 1:
-                self.matrix[gc, detection_classes[m1[j]]] += 1  # correct
+                self.matrix[detection_classes[m1[j]], gc] += 1  # correct
             else:
-                self.matrix[gc, self.nc] += 1  # background FP
+                self.matrix[self.nc, gc] += 1  # background FP
 
         if n:
             for i, dc in enumerate(detection_classes):
                 if not any(m1 == i):
-                    self.matrix[self.nc, dc] += 1  # background FN
+                    self.matrix[dc, self.nc] += 1  # background FN
 
     def matrix(self):
         return self.matrix
@@ -205,8 +168,8 @@ class ConfusionMatrix:
             sn.set(font_scale=1.0 if self.nc < 50 else 0.8)  # for label size
             labels = (0 < len(names) < 99) and len(names) == self.nc  # apply names to ticklabels
             sn.heatmap(array, annot=self.nc < 30, annot_kws={"size": 8}, cmap='Blues', fmt='.2f', square=True,
-                       xticklabels=names + ['background FN'] if labels else "auto",
-                       yticklabels=names + ['background FP'] if labels else "auto").set_facecolor((1, 1, 1))
+                       xticklabels=names + ['background FP'] if labels else "auto",
+                       yticklabels=names + ['background FN'] if labels else "auto").set_facecolor((1, 1, 1))
             fig.axes[0].set_xlabel('True')
             fig.axes[0].set_ylabel('Predicted')
             fig.savefig(Path(save_dir) / 'confusion_matrix.png', dpi=250)
