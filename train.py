@@ -342,8 +342,8 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
 
         ## clear CUDA cache...
-        gc.collect()
-        torch.cuda.empty_cache()
+        # gc.collect()
+        # torch.cuda.empty_cache()
 
         mloss = torch.zeros(4, device=device)  # mean losses
         if rank != -1:
@@ -425,6 +425,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
             logger.info('\tepoch completed in %.2f min.\n' % ((time.time() - t1) / 60))
             t1 = time.time()
         if (epoch+1)%10==0:
+            gc.collect()
             torch.cuda.empty_cache()
             if rank in [-1, 0]:
                 logger.info('\tempty cuda cache took %.2f sec.\n' % ((time.time() - t1)))

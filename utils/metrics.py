@@ -18,7 +18,7 @@ def fitness(x):
 def closest_idx(a, b):
     return abs(b[:, None] - a[None, :]).argmin(axis=-1)
 
-def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names=(), ct=None):
+def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names=(), ct=None, max_by_class=False):
     """ Compute the average precision, given the recall and precision curves.
     Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
     # Arguments
@@ -83,10 +83,12 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
     ## PER CLASS F1 maximization
     if ct is not None and isinstance(ct, list):
         i0 = closest_idx(px, np.array(ct))
+        max_per_class = True
     else:
         i0 = f1.argmax(axis=1) # argmax_per_class
     cc = px[i0]## class specific confidence thresholds
-    ## f1, p, r
+
+    # per-class F1 maximization...
     f1_i0 = f1[np.arange(len(i0)), i0]
     p_i0 = p[np.arange(len(i0)), i0]
     r_i0 = r[np.arange(len(i0)), i0]
@@ -94,25 +96,23 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
     mp_0 = np.average(p_i0, weights=wt)
     mr_0 = np.average(r_i0, weights=wt)
 
-    ## global F1 maximization
-    # i1 = f1.mean(0).argmax()  # max F1 index, unweighted average (averaged over all classes)
-    i2 = np.average(f1, 0, weights=wt).argmax()# max F1 index, weighted average (by # targets per class)
-    i = i2
-
+    ## average F1 maximization (w.r.t. weighted average)...
+    # i = f1.mean(0).argmax()  # max F1 index, unweighted average (averaged over all classes)
+    i = np.average(f1, 0, weights=wt).argmax()# max F1 index, weighted average (by # targets per class)
     conf_best = px[i]
     ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
     p, r, f1, ap_class = p[:, i], r[:, i], f1[:, i], unique_classes.astype('int32')
 
-    ## unweighted averages (across classes)...
-    # mp_1, mr_1, map50_1, map_1, mf1_1 = p.mean(), r.mean(), ap50.mean(), ap.mean(), f1.mean()
-    
     ## weighted average (by # targets per class)...
-    mp_2, mr_2, map50_2, map_2, mf1_2 = np.average(p, weights=wt), np.average(r, weights=wt), np.average(ap50, weights=wt), np.average(ap, weights=wt), np.average(f1, weights=wt)\
+    mp_2, mr_2, mf1_2, map50, map = np.average(p, weights=wt), np.average(r, weights=wt), np.average(f1, weights=wt), np.average(ap50, weights=wt), np.average(ap, weights=wt)
 
-    # mp, mr, mf1, map50, map = mp_0, mr_0, mf1_0, map50_2, map_2
-    mp, mr, mf1, map50, map = mp_2, mr_2, mf1_2, map50_2, map_2
+    if max_by_class:
+        mp, mr, mf1 = mp_0, mr_0, mf1_0
+        p, r, f1 = p_i0, r_i0, f1_i0
+    else:
+        mp, mr, mf1 = mp_2, mr_2, mf1_2
 
-    return mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1_i0, cc)
+    return mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc)
 
 
 def compute_ap(recall, precision):
