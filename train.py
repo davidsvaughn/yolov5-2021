@@ -20,6 +20,8 @@ from torch.cuda import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import boto3
+import gc
 
 import test  # import test.py to get mAP after each epoch
 from models.experimental import attempt_load
@@ -36,7 +38,45 @@ from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_di
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
 logger = logging.getLogger(__name__)
+s3_client    = None
+first_upload = True
 
+def upload_model(opt):
+    global s3_client, first_upload
+
+    if len(opt.weights_path)==0:
+        return # params not passed in
+
+    if s3_client is None:
+        s3_client = boto3.client("s3")
+
+    if len(opt.weights_path)>0 and os.path.exists(opt.weights_path):
+        logger.info(f"Uploading {opt.weights_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/weights.pt")
+        s3_client.upload_file(opt.weights_path, opt.s3_bucket, f"{opt.s3_prefix}/weights.pt")
+    else:
+        logger.info(f"File does not exist: {opt.weights_path}")
+
+    if first_upload:
+        if len(opt.categories_path)>0 and os.path.exists(opt.categories_path):
+            logger.info(f"Uploading {opt.categories_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/categories.json")
+            s3_client.upload_file(opt.categories_path, opt.s3_bucket, f"{opt.s3_prefix}/categories.json")
+        else:
+            logger.info(f"File does not exist: {opt.categories_path}")
+
+        if len(opt.hyp_path)>0 and os.path.exists(opt.hyp_path):
+            logger.info(f"Uploading {opt.hyp_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/hyp.yaml")
+            s3_client.upload_file(opt.hyp_path, opt.s3_bucket, f"{opt.s3_prefix}/hyp.yaml")
+        else:
+            logger.info(f"File does not exist: {opt.hyp_path}")
+
+        if len(opt.manifest_path)>0 and os.path.exists(opt.manifest_path):
+            logger.info(f"Uploading {opt.manifest_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/manifest.txt")
+            s3_client.upload_file(opt.manifest_path, opt.s3_bucket, f"{opt.s3_prefix}/manifest.txt")
+        else:
+            logger.info(f"File does not exist: {opt.manifest_path}")
+    
+    first_upload = False
+    logger.info('All artifacts uploaded!')
 
 def train(hyp, opt, device, tb_writer=None):
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
@@ -100,6 +140,10 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Freeze
     freeze = []  # parameter names to freeze (full or partial)
+    if hyp.get('freeze'): ## freeze backbone layers?
+        N = int(hyp['freeze'])+1
+        freeze = ['model.%s.' % x for x in range(N)]
+        logger.info('Freezing first {} layers of network'.format(N))
     for k, v in model.named_parameters():
         v.requires_grad = True  # train all layers
         if any(x in k for x in freeze):
@@ -133,10 +177,15 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Scheduler https://arxiv.org/pdf/1812.01187.pdf
     # https://pytorch.org/docs/stable/_modules/torch/optim/lr_scheduler.html#OneCycleLR
+
+    lr_epochs, init_epochs = epochs, 0
+    if hyp.get('init_epochs'):
+        init_epochs = hyp['init_epochs']
+        lr_epochs += init_epochs
     if opt.linear_lr:
-        lf = lambda x: (1 - x / (epochs - 1)) * (1.0 - hyp['lrf']) + hyp['lrf']  # linear
+        lf = lambda x: (1 - x / (lr_epochs - 1)) * (1.0 - hyp['lrf']) + hyp['lrf']  # linear
     else:
-        lf = one_cycle(1, hyp['lrf'], epochs)  # cosine 1->hyp['lrf']
+        lf = one_cycle(1, hyp['lrf'], lr_epochs)  # cosine 1->hyp['lrf']
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
     # plot_lr_scheduler(optimizer, scheduler, epochs)
 
@@ -171,10 +220,15 @@ def train(hyp, opt, device, tb_writer=None):
 
         del ckpt, state_dict
 
-    # Image sizes
+    # Fix Image sizes
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)
     nl = model.model[-1].nl  # number of detection layers (used for scaling hyp['obj'])
     imgsz, imgsz_test = [check_img_size(x, gs) for x in opt.img_size]  # verify imgsz are gs-multiples
+
+    # Fix Crop size
+    if hyp.get('crop') and hyp['crop']>0:
+        hyp['crop'] = check_img_size(hyp['crop'], gs)
+        imgsz_test = hyp['crop']
 
     # DP mode
     if cuda and rank == -1 and torch.cuda.device_count() > 1:
@@ -196,7 +250,9 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Process 0
     if rank in [-1, 0]:
-        testloader = create_dataloader(test_path, imgsz_test, batch_size * 2, gs, opt,  # testloader
+        new_best_model = False
+        test_batch_size = batch_size
+        testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
                                        hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
                                        world_size=opt.world_size, workers=opt.workers,
                                        pad=0.5, prefix=colorstr('val: '))[0]
@@ -204,8 +260,6 @@ def train(hyp, opt, device, tb_writer=None):
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
             c = torch.tensor(labels[:, 0])  # classes
-            # cf = torch.bincount(c.long(), minlength=nc) + 1.  # frequency
-            # model._initialize_biases(cf.to(device))
             if plots:
                 plot_labels(labels, names, save_dir, loggers)
                 if tb_writer:
@@ -234,7 +288,7 @@ def train(hyp, opt, device, tb_writer=None):
     model.names = names
 
     # Start training
-    t0 = time.time()
+    t0 = t1 = time.time()
     nw = max(round(hyp['warmup_epochs'] * nb), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
     # nw = min(nw, (epochs - start_epoch) / 2 * nb)  # limit warmup to < 1/2 of training
     maps = np.zeros(nc)  # mAP per class
@@ -242,6 +296,27 @@ def train(hyp, opt, device, tb_writer=None):
     scheduler.last_epoch = start_epoch - 1  # do not move
     scaler = amp.GradScaler(enabled=cuda)
     compute_loss = ComputeLoss(model)  # init loss class
+
+    ###### resuming training run..... #########################################
+    if init_epochs>0:
+        nw = -1
+        print('Stepping lr_scheduler forward {} epochs...'.format(init_epochs))
+    for i in range(init_epochs-1):
+        scheduler.step()
+    if init_epochs>0 and rank in [-1, 0]:  # check initial model performance....
+        test.test(opt.data,
+                batch_size=test_batch_size,
+                imgsz=imgsz_test,
+                model=ema.ema,
+                single_cls=opt.single_cls,
+                dataloader=testloader,
+                save_dir=save_dir,
+                verbose=True,
+                plots=False,
+                log_imgs=opt.log_imgs if wandb else 0,
+                compute_loss=compute_loss)
+    ###########################################################################
+
     logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
                 f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
@@ -271,10 +346,12 @@ def train(hyp, opt, device, tb_writer=None):
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
         pbar = enumerate(dataloader)
-        logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'labels', 'img_size'))
+        # logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'labels', 'img_size'))
+        logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'targets', 'imgs_sec'))
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
         optimizer.zero_grad()
+        num_img = 0
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
@@ -320,24 +397,37 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Print
             if rank in [-1, 0]:
+                td = time.time()-t1
+                num_img += imgs.shape[0]
+                imgs_sec = (num_img/td) * opt.world_size
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
                 s = ('%10s' * 2 + '%10.4g' * 6) % (
-                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
+                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0],
+                    imgs_sec ## #images/sec
+                )
                 pbar.set_description(s)
 
                 # Plot
                 if plots and ni < 3:
                     f = save_dir / f'train_batch{ni}.jpg'  # filename
                     Thread(target=plot_images, args=(imgs, targets, paths, f), daemon=True).start()
-                    if tb_writer:
-                        tb_writer.add_graph(torch.jit.trace(de_parallel(model), imgs, strict=False), [])  # model graph
-                        # tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
+                    # if tb_writer:
+                    #     tb_writer.add_graph(torch.jit.trace(de_parallel(model), imgs, strict=False), [])  # model graph
+                    #     # tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
                 elif plots and ni == 10 and wandb_logger.wandb:
                     wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in
                                                   save_dir.glob('train*.jpg') if x.exists()]})
 
             # end batch ------------------------------------------------------------------------------------------------
+        if rank in [-1, 0]:
+            logger.info('\tepoch completed in %.2f min.\n' % ((time.time() - t1) / 60))
+            t1 = time.time()
+        if (epoch+1)%10==0:
+            gc.collect()
+            torch.cuda.empty_cache()
+            if rank in [-1, 0]:
+                logger.info('\tempty cuda cache took %.2f sec.\n' % ((time.time() - t1)))
         # end epoch ----------------------------------------------------------------------------------------------------
 
         # Scheduler
@@ -349,28 +439,31 @@ def train(hyp, opt, device, tb_writer=None):
             # mAP
             ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
             final_epoch = epoch + 1 == epochs
-            if not opt.notest or final_epoch:  # Calculate mAP
-                wandb_logger.current_epoch = epoch + 1
-                results, maps, times = test.test(data_dict,
-                                                 batch_size=batch_size * 2,
-                                                 imgsz=imgsz_test,
-                                                 model=ema.ema,
-                                                 single_cls=opt.single_cls,
-                                                 dataloader=testloader,
-                                                 save_dir=save_dir,
-                                                 verbose=nc < 50 and final_epoch,
-                                                 plots=plots and final_epoch,
-                                                 wandb_logger=wandb_logger,
-                                                 compute_loss=compute_loss,
-                                                 is_coco=is_coco)
+            try:
+                if not opt.notest or final_epoch:  # Calculate mAP
+                    wandb_logger.current_epoch = epoch + 1
+                    results, maps, times = test.test(data_dict,
+                                                    batch_size=test_batch_size,
+                                                    imgsz=imgsz_test,
+                                                    model=ema.ema,
+                                                    single_cls=opt.single_cls,
+                                                    dataloader=testloader,
+                                                    save_dir=save_dir,
+                                                    verbose=nc < 50 and final_epoch,
+                                                    plots=plots and final_epoch,
+                                                    wandb_logger=wandb_logger,
+                                                    compute_loss=compute_loss,
+                                                    is_coco=is_coco)
+            except:
+                print('validation run failed....')
 
             # Write
             with open(results_file, 'a') as f:
-                f.write(s + '%10.4g' * 7 % results + '\n')  # append metrics, val_loss
+                f.write(s + '%10.4g' * 8 % results + '\n')  # append metrics, val_loss
 
             # Log
             tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
-                    'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
+                    'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
                     'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
                     'x/lr0', 'x/lr1', 'x/lr2']  # params
             for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
@@ -399,12 +492,21 @@ def train(hyp, opt, device, tb_writer=None):
                 # Save last, best and delete
                 torch.save(ckpt, last)
                 if best_fitness == fi:
+                    logger.info('Saving best model!')
                     torch.save(ckpt, best)
+                    new_best_model = True
                 if wandb_logger.wandb:
                     if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
                         wandb_logger.log_model(
                             last.parent, opt, epoch, fi, best_model=best_fitness == fi)
                 del ckpt
+
+                # Upload best model to s3
+            if epoch>25 and epoch%10==0:
+                if new_best_model:
+                    strip_optimizer(best)
+                    upload_model(opt)
+                    new_best_model = False
 
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training
@@ -421,10 +523,10 @@ def train(hyp, opt, device, tb_writer=None):
         if opt.data.endswith('coco.yaml') and nc == 80:  # if COCO
             for m in [last, best] if best.exists() else [last]:  # speed, mAP tests
                 results, _, _ = test.test(opt.data,
-                                          batch_size=batch_size * 2,
+                                          batch_size=test_batch_size,
                                           imgsz=imgsz_test,
-                                          conf_thres=0.001,
-                                          iou_thres=0.7,
+                                          conf_thres=0.1,
+                                          iou_thres=0.25,
                                           model=attempt_load(m, device).half(),
                                           single_cls=opt.single_cls,
                                           dataloader=testloader,
@@ -487,6 +589,13 @@ if __name__ == '__main__':
     parser.add_argument('--bbox_interval', type=int, default=-1, help='Set bounding-box image logging interval for W&B')
     parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
+    # Params needed to upload model checkpoints to s3 
+    parser.add_argument('--s3_bucket', type=str, default='', help='s3_bucket')
+    parser.add_argument('--s3_prefix', type=str, default='', help='s3_prefix')
+    parser.add_argument('--weights_path', type=str, default='', help='weights_path')
+    parser.add_argument('--hyp_path', type=str, default='', help='hyp_path')
+    parser.add_argument('--categories_path', type=str, default='', help='categories_path')
+    parser.add_argument('--manifest_path', type=str, default='', help='manifest_path')
     opt = parser.parse_args()
 
     # Set DDP variables

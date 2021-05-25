@@ -45,7 +45,6 @@ class Colors:
 
 colors = Colors()  # create instance for 'from utils.plots import colors'
 
-
 def hist2d(x, y, n=100):
     # 2d histogram used in labels.png and evolve.png
     xedges, yedges = np.linspace(x.min(), x.max(), n), np.linspace(y.min(), y.max(), n)
@@ -68,19 +67,36 @@ def butter_lowpass_filtfilt(data, cutoff=1500, fs=50000, order=5):
     return filtfilt(b, a, data)  # forward-backward filter
 
 
-def plot_one_box(x, im, color=(128, 128, 128), label=None, line_thickness=3):
-    # Plots one bounding box on image 'im' using OpenCV
-    assert im.data.contiguous, 'Image not contiguous. Apply np.ascontiguousarray(im) to plot_on_box() input image.'
-    tl = line_thickness or round(0.002 * (im.shape[0] + im.shape[1]) / 2) + 1  # line/font thickness
+def plot_one_box(x, img, color=None, label=None, line_thickness=3):
+    # Plots one bounding box on image 'img' using OpenCV
+    assert img.data.contiguous, 'Image not contiguous. Apply np.ascontiguousarray(img) to plot_on_box() input image.'
+    tl = line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1  # line/font thickness
+    color = color or [random.randint(0, 255) for _ in range(3)]
     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
-    cv2.rectangle(im, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
+    cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
     if label:
         tf = max(tl - 1, 1)  # font thickness
-        t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
+        t_size = cv2.getTextSize(label, 0, fontScale=tl / 2, thickness=tf)[0]
         c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
-        cv2.rectangle(im, c1, c2, color, -1, cv2.LINE_AA)  # filled
-        cv2.putText(im, label, (c1[0], c1[1] - 2), 0, tl / 3, [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
+        cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
+        ox, oy = c1[0], c1[1] - 2
+        oy = max(12, oy)
+        cv2.putText(img, label, (ox, oy), 0, tl / 2, [0, 0, 0], thickness=tf, lineType=cv2.LINE_AA)
 
+def crop_one_box(x, img):
+    c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
+    return img[c1[1]:c2[1], c1[0]:c2[0]]
+
+def plot_one_label(label, img, ox, oy, color=None, line_thickness=None):
+    # Plots one bounding box on image img
+    tl = line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1  # line/font thickness
+    color = color or [random.randint(0, 255) for _ in range(3)]
+    tf = max(tl - 1, 1)  # font thickness
+    t_size = cv2.getTextSize(label, 0, fontScale=tl / 2, thickness=tf)[0]
+    # ox, oy = c1[0], c1[1] - 2
+    oy = max(12, oy)
+    cv2.putText(img, label, (ox, oy), 0, tl / 2, color, thickness=tf, lineType=cv2.LINE_AA)
+    # print((ox, oy))
 
 def plot_one_box_PIL(box, im, color=(128, 128, 128), label=None, line_thickness=None):
     # Plots one bounding box on image 'im' using PIL
@@ -116,10 +132,13 @@ def plot_wh_methods():  # from utils.plots import *; plot_wh_methods()
     fig.savefig('comparison.png', dpi=200)
 
 
-def output_to_target(output):
+def output_to_target(output, idx=[]):
     # Convert model output to target format [batch_id, class_id, x, y, w, h, conf]
     targets = []
     for i, o in enumerate(output):
+        k = idx[i]
+        if k is not None:
+            o = o[k,:]
         for *box, conf, cls in o.cpu().numpy():
             targets.append([i, cls, *list(*xyxy2xywh(np.array(box)[None])), conf])
     return np.array(targets)
@@ -154,6 +173,8 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         if i == max_subplots:  # if last batch has fewer images than we expect
             break
 
+        first = names.copy() if names else None
+
         block_x = int(w * (i // ns))
         block_y = int(h * (i % ns))
 
@@ -178,18 +199,23 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
             boxes[[0, 2]] += block_x
             boxes[[1, 3]] += block_y
             for j, box in enumerate(boxes.T):
-                cls = int(classes[j])
-                color = colors(cls)
-                cls = names[cls] if names else cls
+                cls_id = int(classes[j])
+                color = colors(cls_id % colors.n)
+                cls = names[cls_id] if names else cls_id
+                label = True
+                if first and first[cls_id]:
+                    first[cls_id]=0
+                else:
+                    label = False
                 if labels or conf[j] > 0.25:  # 0.25 conf thresh
-                    label = '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
-                    plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
+                    label = ('%s' % cls if labels else '%.1f' % (conf[j])) if not label else '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
+                    plot_one_box(box, mosaic, label=label, color=color, line_thickness=1)#tl
 
         # Draw image filename labels
         if paths:
             label = Path(paths[i]).name[:40]  # trim to 40 char
             t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
-            cv2.putText(mosaic, label, (block_x + 5, block_y + t_size[1] + 5), 0, tl / 3, [220, 220, 220], thickness=tf,
+            cv2.putText(mosaic, label, (block_x + 5, block_y + t_size[1] + 5), 0, tl / 3, [0, 0, 0], thickness=tf,
                         lineType=cv2.LINE_AA)
 
         # Image border
@@ -313,7 +339,7 @@ def plot_labels(labels, names=(), save_dir=Path(''), loggers=None):
     labels[:, 1:] = xywh2xyxy(labels[:, 1:]) * 2000
     img = Image.fromarray(np.ones((2000, 2000, 3), dtype=np.uint8) * 255)
     for cls, *box in labels[:1000]:
-        ImageDraw.Draw(img).rectangle(box, width=1, outline=colors(cls))  # plot
+        ImageDraw.Draw(img).rectangle(box, width=1, outline=colors(int(cls) % colors.n))  # plot
     ax[1].imshow(img)
     ax[1].axis('off')
 
