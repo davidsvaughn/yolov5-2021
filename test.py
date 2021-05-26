@@ -340,7 +340,7 @@ if __name__ == '__main__':
     parser.add_argument('--project', default='runs/test', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--print-batches', type=int, default=3, help='how many batches to print')
-    parser.add_argument('--print-size', type=int, default=0, help='print size (pixels)')
+    parser.add_argument('--print-size', type=int, default=640, help='print size (pixels)')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
