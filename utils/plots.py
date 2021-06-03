@@ -42,6 +42,32 @@ class Colors:
     def hex2rgb(h):  # rgb order (PIL)
         return tuple(int(h[1 + i:1 + i + 2], 16) for i in (0, 2, 4))
 
+# https://stackoverflow.com/questions/470690/how-to-automatically-generate-n-distinct-colors
+kelly_colors = dict(vivid_yellow=(255, 179, 0),
+                    strong_purple=(128, 62, 117),
+                    vivid_orange=(255, 104, 0),
+                    very_light_blue=(166, 189, 215),
+                    vivid_red=(193, 0, 32),
+                    grayish_yellow=(206, 162, 98),
+                    medium_gray=(129, 112, 102),
+                    # these aren't good for people with defective color vision:
+                    vivid_green=(0, 125, 52),
+                    strong_purplish_pink=(246, 118, 142),
+                    strong_blue=(0, 83, 138),
+                    strong_yellowish_pink=(255, 122, 92),
+                    strong_violet=(83, 55, 122),
+                    vivid_orange_yellow=(255, 142, 0),
+                    strong_purplish_red=(179, 40, 81),
+                    vivid_greenish_yellow=(244, 200, 0),
+                    strong_reddish_brown=(127, 24, 13),
+                    vivid_yellowish_green=(147, 170, 0),
+                    deep_yellowish_brown=(89, 51, 21),
+                    vivid_reddish_orange=(241, 58, 19),
+                    dark_olive_green=(35, 44, 22))
+
+def color_list():
+    colors = list(kelly_colors.values())
+    return colors
 
 colors = Colors()  # create instance for 'from utils.plots import colors'
 
@@ -67,7 +93,7 @@ def butter_lowpass_filtfilt(data, cutoff=1500, fs=50000, order=5):
     return filtfilt(b, a, data)  # forward-backward filter
 
 
-def plot_one_box(x, img, color=None, label=None, line_thickness=3):
+def plot_one_box(x, img, color=None, label=None, line_thickness=None, yoff=0):
     # Plots one bounding box on image 'img' using OpenCV
     assert img.data.contiguous, 'Image not contiguous. Apply np.ascontiguousarray(img) to plot_on_box() input image.'
     tl = line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1  # line/font thickness
@@ -78,6 +104,10 @@ def plot_one_box(x, img, color=None, label=None, line_thickness=3):
         tf = max(tl - 1, 1)  # font thickness
         t_size = cv2.getTextSize(label, 0, fontScale=tl / 2, thickness=tf)[0]
         c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
+
+        c1 = (c1[0]-t_size[0]*yoff, c1[1])
+        c2 = (c2[0]-t_size[0]*yoff, c2[1])
+
         cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
         ox, oy = c1[0], c1[1] - 2
         oy = max(12, oy)

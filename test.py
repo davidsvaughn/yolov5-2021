@@ -16,7 +16,7 @@ from utils.general import coco80_to_coco91_class, check_dataset, check_file, che
 from utils.metrics import ap_per_class, ConfusionMatrix
 from utils.plots import plot_images, output_to_target, plot_study_txt
 from utils.torch_utils import select_device, time_synchronized
-
+import ast
 
 @torch.no_grad()
 def test(data,
@@ -46,6 +46,8 @@ def test(data,
     if opt is not None:
         print_size = opt.print_size
         print_batches = opt.print_batches
+        ct = ast.literal_eval(opt.ct)
+        if len(ct)==0: ct=None
     if print_batches<0:
         print_batches = 1000
 
@@ -248,7 +250,7 @@ def test(data,
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
     conf_best = -1
     if len(stats) and stats[0].any():
-        mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
+        mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names, ct=ct, max_by_class=opt.max_by_class)
         # p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
         # ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
         # mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
@@ -268,7 +270,8 @@ def test(data,
             print(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i]))
     if conf_best>-1:
         print('\nOptimal Confidence Threshold: {0:0.3f}'.format(conf_best))
-        # print('Optimal Confidence Thresholds (Per-Class): {}'.format(list(cc.round(3))))
+        if opt.max_by_class:
+            print('Optimal Confidence Thresholds (Per-Class): {}'.format(list(cc.round(3))))
 
     # Print speeds
     t = tuple(x / seen * 1E3 for x in (t0, t1, t0 + t1)) + (imgsz, imgsz, batch_size)  # tuple
@@ -341,6 +344,8 @@ if __name__ == '__main__':
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--print-batches', type=int, default=3, help='how many batches to print')
     parser.add_argument('--print-size', type=int, default=640, help='print size (pixels)')
+    parser.add_argument('--max-by-class', action='store_true', help='find class specific confidence thresholds')
+    parser.add_argument('--ct', type=str, default='[]', help='class confidence thresholds')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
