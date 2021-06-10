@@ -40,12 +40,14 @@ def test(data,
          compute_loss=None,
          half_precision=True,
          is_coco=False,
+         max_by_class=True,
          opt=None):
     
     print_size, print_batches = 0, 3
     if opt is not None:
         print_size = opt.print_size
         print_batches = opt.print_batches
+        max_by_class = opt.max_by_class
         ct = ast.literal_eval(opt.ct)
         if len(ct)==0: ct=None
     else:
@@ -252,7 +254,7 @@ def test(data,
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
     conf_best = -1
     if len(stats) and stats[0].any():
-        mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names, ct=ct, max_by_class=opt.max_by_class)
+        mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names, ct=ct, max_by_class=max_by_class)
         # p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
         # ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
         # mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
@@ -272,7 +274,7 @@ def test(data,
             print(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i]))
     if conf_best>-1:
         print('\nOptimal Confidence Threshold: {0:0.3f}'.format(conf_best))
-        if opt.max_by_class:
+        if max_by_class:
             print('Optimal Confidence Thresholds (Per-Class): {}'.format(list(cc.round(3))))
 
     # Print speeds
