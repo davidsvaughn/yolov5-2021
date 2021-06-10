@@ -48,6 +48,8 @@ def test(data,
         print_batches = opt.print_batches
         ct = ast.literal_eval(opt.ct)
         if len(ct)==0: ct=None
+    else:
+        ct = None
     if print_batches<0:
         print_batches = 1000
 
