@@ -454,59 +454,61 @@ def train(hyp, opt, device, tb_writer=None):
                                                     wandb_logger=wandb_logger,
                                                     compute_loss=compute_loss,
                                                     is_coco=is_coco)
-            except:
-                print('validation run failed....')
 
-            # Write
-            with open(results_file, 'a') as f:
-                f.write(s + '%10.4g' * 8 % results + '\n')  # append metrics, val_loss
+                # Write
+                with open(results_file, 'a') as f:
+                    f.write(s + '%10.4g' * 8 % results + '\n')  # append metrics, val_loss
 
-            # Log
-            tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
-                    'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
-                    'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
-                    'x/lr0', 'x/lr1', 'x/lr2']  # params
-            for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
-                if tb_writer:
-                    tb_writer.add_scalar(tag, x, epoch)  # tensorboard
-                if wandb_logger.wandb:
-                    wandb_logger.log({tag: x})  # W&B
+                # Log
+                tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
+                        'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
+                        'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
+                        'x/lr0', 'x/lr1', 'x/lr2']  # params
+                for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
+                    if tb_writer:
+                        tb_writer.add_scalar(tag, x, epoch)  # tensorboard
+                    if wandb_logger.wandb:
+                        wandb_logger.log({tag: x})  # W&B
 
-            # Update best mAP
-            fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
-            if fi > best_fitness:
-                best_fitness = fi
-            wandb_logger.end_epoch(best_result=best_fitness == fi)
+                # Update best mAP
+                fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+                if fi > best_fitness:
+                    best_fitness = fi
+                wandb_logger.end_epoch(best_result=best_fitness == fi)
 
-            # Save model
-            if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
-                ckpt = {'epoch': epoch,
-                        'best_fitness': best_fitness,
-                        'training_results': results_file.read_text(),
-                        'model': deepcopy(de_parallel(model)).half(),
-                        'ema': deepcopy(ema.ema).half(),
-                        'updates': ema.updates,
-                        'optimizer': optimizer.state_dict(),
-                        'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
+                # Save model
+                if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
+                    ckpt = {'epoch': epoch,
+                            'best_fitness': best_fitness,
+                            'training_results': results_file.read_text(),
+                            'model': deepcopy(de_parallel(model)).half(),
+                            'ema': deepcopy(ema.ema).half(),
+                            'updates': ema.updates,
+                            'optimizer': optimizer.state_dict(),
+                            'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
 
-                # Save last, best and delete
-                torch.save(ckpt, last)
-                if best_fitness == fi:
-                    logger.info('Saving best model!')
-                    torch.save(ckpt, best)
-                    new_best_model = True
-                if wandb_logger.wandb:
-                    if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
-                        wandb_logger.log_model(
-                            last.parent, opt, epoch, fi, best_model=best_fitness == fi)
-                del ckpt
+                    # Save last, best and delete
+                    torch.save(ckpt, last)
+                    if best_fitness == fi:
+                        logger.info('Saving best model!')
+                        torch.save(ckpt, best)
+                        new_best_model = True
+                    if wandb_logger.wandb:
+                        if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
+                            wandb_logger.log_model(
+                                last.parent, opt, epoch, fi, best_model=best_fitness == fi)
+                    del ckpt
 
-                # Upload best model to s3
-            if epoch>25 and epoch%10==0:
-                if new_best_model:
-                    strip_optimizer(best)
-                    upload_model(opt)
-                    new_best_model = False
+                    # Upload best model to s3
+                if epoch>25 and epoch%10==0:
+                    if new_best_model:
+                        strip_optimizer(best)
+                        upload_model(opt)
+                        new_best_model = False
+
+            except Exception as e:
+                print('validation run failed:'+ str(e))
+                logger.error('validation run failed:'+ str(e))
 
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training
