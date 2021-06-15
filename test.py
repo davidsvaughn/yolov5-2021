@@ -23,8 +23,8 @@ def test(data,
          weights=None,
          batch_size=32,
          imgsz=640,
-         conf_thres=0.001,
-         iou_thres=0.25,  # for NMS
+         conf_thres=-1, # not for NMS
+         iou_thres=0.25,  # not for NMS
          save_json=False,
          single_cls=False,
          augment=False,
@@ -137,7 +137,7 @@ def test(data,
         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
         lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
         t = time_synchronized()
-        output = non_max_suppression(inf_out, conf_thres, iou_thres, labels=lb, multi_label=False, agnostic=single_cls)
+        output = non_max_suppression(inf_out, labels=lb, multi_label=False, agnostic=single_cls)#, conf_thres=conf_thres, iou_thres=iou_thres)
         t1 += time_synchronized() - t
 
         # Statistics per image
@@ -150,6 +150,7 @@ def test(data,
             seen += 1
 
             if len(pred) == 0:
+                idx.append(None)
                 if nl:
                     stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
                 continue
@@ -254,21 +255,16 @@ def test(data,
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
     conf_best = -1
     if len(stats) and stats[0].any():
-        mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names, ct=ct, max_by_class=max_by_class)
-        # p, r, ap, f1, ap_class = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
-        # ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
-        # mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
-        # nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
+        mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names, 
+                                                                                                ct=ct, max_by_class=max_by_class, conf_thres=conf_thres)
     else:
         nt = torch.zeros(1)
 
     # Print results
-    # pf = fmt + '%12i' * 2 + '%12.3g' * 4  # print format
     pf = fmt + '%12.3g' * 7  # print format
     print(pf % ('all', seen, nt.sum(), mp, mr, mf1, map50, map))
 
     # Print results per class
-    # if (verbose or (nc < 50 and not training)) and nc > 1 and len(stats):
     if (verbose or nc < 50) and nc > 1 and len(stats):
         for i, c in enumerate(ap_class):
             print(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i]))
@@ -333,8 +329,8 @@ if __name__ == '__main__':
     parser.add_argument('--data', type=str, default='data/coco128.yaml', help='*.data path')
     parser.add_argument('--batch-size', type=int, default=32, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.6, help='IOU threshold for NMS')
+    parser.add_argument('--conf-thres', type=float, default=-1, help='object confidence threshold')
+    parser.add_argument('--iou-thres', type=float, default=0.25, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
@@ -376,7 +372,7 @@ if __name__ == '__main__':
 
     elif opt.task == 'speed':  # speed benchmarks
         for w in opt.weights:
-            test(opt.data, w, opt.batch_size, opt.img_size, 0.25, 0.45, save_json=False, plots=False, opt=opt)
+            test(opt.data, w, opt.batch_size, opt.img_size, opt.conf_thres, opt.iou_thres, save_json=False, plots=False, opt=opt)
 
     elif opt.task == 'study':  # run over a range of settings and save/plot
         # python test.py --task study --data coco.yaml --iou 0.7 --weights yolov5s.pt yolov5m.pt yolov5l.pt yolov5x.pt

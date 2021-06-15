@@ -143,6 +143,7 @@ def annotate(save_img=False):
             if crop is not None:
                 n += 1
                 crop_path = f'{save_dir}/{cls_id}-{i}_{n}_{p.name}'
+                crop_path = f'{save_dir}/{cls_id}-{i}_{n}+{p.name}'
                 img_crop = crop_one_box(xyxy, img)
                 cv2.imwrite(crop_path, img_crop)
                 continue

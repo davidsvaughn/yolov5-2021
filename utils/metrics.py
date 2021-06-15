@@ -18,8 +18,17 @@ def fitness(x):
 def closest_idx(a, b):
     return abs(b[:, None] - a[None, :]).argmin(axis=-1)
 
+## gives median index if multiple values==max value.... (np.argmax gives smallest index)
+def arg_max(a):
+	if len(a.shape)==1:
+		a = a[None,:]
+	z = (a == a.max(axis=1)[:, None])
+	r = np.tile(np.arange(a.shape[1]), (a.shape[0], 1))
+	ma = np.ma.masked_where(~z, r)
+	idx = np.ma.median(ma, 1).data.astype(np.int32)
+	return idx.squeeze()
 
-def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names=(), ct=None, max_by_class=False):
+def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names=(), ct=None, max_by_class=False, conf_thres=-1):
     """ Compute the average precision, given the recall and precision curves.
     Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
     # Arguments
@@ -83,10 +92,10 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
 
     ## PER CLASS F1 maximization
     if ct is not None and isinstance(ct, list):
-        i0 = closest_idx(px, np.array(ct))
-        max_per_class = True
+        i0 = closest_idx(px, np.array(ct)[unique_classes.astype('int32')])
+        max_by_class = True
     else:
-        i0 = f1.argmax(axis=1) # argmax_per_class
+        i0 = arg_max(f1)
     cc = px[i0]## class specific confidence thresholds
 
     # per-class F1 maximization...
@@ -98,9 +107,11 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
     mr_0 = np.average(r_i0, weights=wt)
 
     ## average F1 maximization (w.r.t. weighted average)...
-    # i = f1.mean(0).argmax()  # max F1 index, unweighted average (averaged over all classes)
-    i = np.average(f1, 0, weights=wt).argmax()# max F1 index, weighted average (by # targets per class)
+    mu = np.average(f1, 0, weights=wt)
+    i = arg_max(mu)# max F1 index, weighted average (by # targets per class)
     conf_best = px[i]
+    if conf_thres>0:
+        i = (np.abs(px - conf_thres)).argmin()
     ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
     p, r, f1, ap_class = p[:, i], r[:, i], f1[:, i], unique_classes.astype('int32')
 
