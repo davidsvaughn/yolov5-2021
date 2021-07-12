@@ -17,7 +17,8 @@ from utils.general import non_max_suppression, make_divisible, scale_coords, inc
 from utils.plots import colors, plot_one_box
 from utils.torch_utils import time_synchronized
 ##
-from utils.activations import SiLU
+from torch.nn import SiLU
+# from utils.activations import SiLU ## PyTorch 1.6
 
 def autopad(k, p=None):  # kernel, padding
     # Pad to 'same'
