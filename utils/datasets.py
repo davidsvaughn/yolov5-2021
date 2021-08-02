@@ -366,6 +366,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         if hyp is not None:
             if hyp.get('augment_gray') and hyp['augment_gray']!=0:
                 self.augment = True
+                self.clahe = cv2.createCLAHE(clipLimit = 3.0, tileGridSize=(8,8))
             if hyp.get('crop') and hyp['crop']>0:
                 self.crop = hyp['crop']
 
@@ -581,7 +582,13 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             if hyp is not None:
                 if hyp.get('augment_gray'):
                     if max(h0, w0)>1000:## must be RGB
+                        # n = np.random.randint(10000)
+                        # cv2.imwrite(f'/home/david/code/phawk/data/test/test3/tmp/img_{n}A.jpg', img)
                         img = augment_gray(img, hyp['augment_gray'])
+                        # cv2.imwrite(f'/home/david/code/phawk/data/test/test3/tmp/img_{n}B.jpg', img)
+                        ## adaptive histogram equalization...
+                        img = self.clahe.apply(img[:,:,0].astype(np.uint8))[:,:,None] * np.ones(3, dtype=int)[None, None, :]
+                        # cv2.imwrite(f'/home/david/code/phawk/data/test/test3/tmp/img_{n}C.jpg', img)
 
             # Apply cutouts
             # if random.random() < 0.9:
@@ -611,6 +618,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             labels_out[:, 1:] = torch.from_numpy(labels)
 
         # Convert
+        # if len(img.shape)<3:
+        #     print('huh?')
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img)
 
@@ -730,7 +739,7 @@ def augment_gray(img, p):
     if m==1: ## kernel size
         k = random.randint(2,4)
     else: ## gaussian blur kernel size
-        k = random.randint(11,31)
+        k = random.randint(7,17)
     g = blur(g, k, m)
     ##
     return g.astype(np.float64)
