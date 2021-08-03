@@ -1,6 +1,6 @@
-# Hyperparameters for COCO training from scratch
-# python train.py --batch 40 --cfg yolov5m.yaml --weights '' --data coco.yaml --img 640 --epochs 300
-# See tutorials for hyperparameter evolution https://github.com/ultralytics/yolov5#tutorials
+## Hyperparameters for COCO training from scratch
+## python train.py --batch 40 --cfg yolov5m.yaml --weights '' --data coco.yaml --img 640 --epochs 300
+## See tutorials for hyperparameter evolution https://github.com/ultralytics/yolov5#tutorials
 
 
 lr0: 0.01  # initial learning rate (SGD=1E-2, Adam=1E-3)
@@ -31,3 +31,10 @@ flipud: 0.0  # image flip up-down (probability)
 fliplr: 0.5  # image flip left-right (probability)
 mosaic: 1.0  # image mosaic (probability)
 mixup: 0.0  # image mixup (probability)
+
+#################################################
+## phawk added hyperparameters ##################
+# crop: 3008 # if scale=1536, then code will rescale images to 3008, then random crop down to 1536 (yes, confusing...)
+# augment_gray: 0.5 # for thermal models... controls how RGB images are converted to grayscale (to augment thermal images)
+# freeze: 9 # will freeze first 9 layers of network (backbone)
+# init_epochs: 100 # if resuming previous training run, will reset lr_scheduler  
