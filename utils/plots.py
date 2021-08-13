@@ -161,20 +161,38 @@ def plot_wh_methods():  # from utils.plots import *; plot_wh_methods()
     plt.legend()
     fig.savefig('comparison.png', dpi=200)
 
+# def output_to_target(output, idx=[]):
+#     # Convert model output to target format [batch_id, class_id, x, y, w, h, conf]
+#     targets = []
+#     for i, o in enumerate(output):
+#         k = idx[i]
+#         if k is not None:
+#             o = o[k,:]
+#         for *box, conf, cls in o.cpu().numpy():
+#             targets.append([i, cls, *list(*xyxy2xywh(np.array(box)[None])), conf])
+#     return np.array(targets)
 
-def output_to_target(output, idx=[]):
+def output_to_target(output, idx=[], idx_fp=None, idx_conf=None):
     # Convert model output to target format [batch_id, class_id, x, y, w, h, conf]
     targets = []
     for i, o in enumerate(output):
         k = idx[i]
         if k is not None:
+            if idx_fp is not None:
+                if idx_conf is not None and idx_conf.cpu().numpy().mean()<1:
+                    print('huh')
+                k = idx_fp[k]
             o = o[k,:]
+        else:
+            if idx_fp is not None:
+                if idx_conf is not None and idx_conf.cpu().numpy().mean()<1:
+                    o = o[idx_conf,:]
+                o = o[idx_fp,:]
         for *box, conf, cls in o.cpu().numpy():
             targets.append([i, cls, *list(*xyxy2xywh(np.array(box)[None])), conf])
     return np.array(targets)
 
-
-def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=640, max_subplots=16):
+def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=640, max_subplots=16, only_labeled=False):
     # Plot image grid with labels
 
     if isinstance(images, torch.Tensor):
@@ -198,6 +216,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         h = math.ceil(scale_factor * h)
         w = math.ceil(scale_factor * w)
 
+    sv = not only_labeled 
     mosaic = np.full((int(ns * h), int(ns * w), 3), 255, dtype=np.uint8)  # init
     for i, img in enumerate(images):
         if i == max_subplots:  # if last batch has fewer images than we expect
@@ -240,6 +259,8 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
                 if labels or conf[j] > 0.25:  # 0.25 conf thresh
                     label = ('%s' % cls if labels else '%.1f' % (conf[j])) if not label else '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
                     plot_one_box(box, mosaic, label=label, color=color, line_thickness=1)#tl
+                    if only_labeled:
+                        sv = True
 
         # Draw image filename labels
         if paths:
@@ -252,12 +273,15 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         cv2.rectangle(mosaic, (block_x, block_y), (block_x + w, block_y + h), (255, 255, 255), thickness=3)
 
     if fname:
-        r = min(1280. / max(h, w) / ns, 1.0)  # ratio to limit image size
-        mosaic = cv2.resize(mosaic, (int(ns * w * r), int(ns * h * r)), interpolation=cv2.INTER_AREA)
-        # cv2.imwrite(fname, cv2.cvtColor(mosaic, cv2.COLOR_BGR2RGB))  # cv2 save
-        Image.fromarray(mosaic).save(fname)  # PIL save
-    return mosaic
+        ## another resize???  wtf???
+        # r = min(1280. / max(h, w) / ns, 1.0)  # ratio to limit image size
+        # mosaic = cv2.resize(mosaic, (int(ns * w * r), int(ns * h * r)), interpolation=cv2.INTER_AREA)
 
+        ## save...
+        # cv2.imwrite(fname, cv2.cvtColor(mosaic, cv2.COLOR_BGR2RGB))  # cv2 save
+        if sv:
+            Image.fromarray(mosaic).save(fname)  # PIL save
+    return mosaic
 
 def plot_lr_scheduler(optimizer, scheduler, epochs=300, save_dir=''):
     # Plot LR simulating training for full epochs
