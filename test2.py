@@ -69,7 +69,8 @@ def test(data,
 
     else:  # called directly
         set_logging()
-        device = select_device(opt.device, batch_size=batch_size)
+        # device = select_device(opt.device, batch_size=batch_size)
+        device = select_device(opt.device, batch_size=2)
 
         # Directories
         save_dir = increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)  # increment run
@@ -145,7 +146,7 @@ def test(data,
         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
         lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
         t = time_synchronized()
-        output = non_max_suppression(inf_out, labels=lb, multi_label=False, agnostic=single_cls)#, conf_thres=conf_thres, iou_thres=iou_thres)
+        output = non_max_suppression(inf_out, labels=lb, multi_label=False, agnostic=True)#, conf_thres=conf_thres, iou_thres=iou_thres)
         t1 += time_synchronized() - t
 
         # Statistics per image
@@ -175,9 +176,6 @@ def test(data,
                 img_box = img_box.to(device)
                 io2s = box_io2(img_box, pred[:, :4])
                 k = (io2s > 0.95).nonzero(as_tuple=True)[1]
-                # z = torch.zeros(pred.shape[0], dtype=torch.bool)
-                # z[k] = True
-                # k = z
                 pred = pred[k,:]
                 idx.append(k)
             else:

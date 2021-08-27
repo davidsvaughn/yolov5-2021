@@ -149,8 +149,12 @@ def detect(opt):
         pred = model(img, augment=opt.augment)[0]
 
         # Apply NMS
-        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, opt.classes, opt.agnostic_nms,
-                                   max_det=opt.max_det)
+        pred = non_max_suppression(pred,
+                                    opt.conf_thres,
+                                    opt.iou_thres,
+                                    opt.classes,
+                                    # opt.agnostic_nms, ## use default (True) instead
+                                    max_det=opt.max_det)
         t2 = time_synchronized()
 
         # Apply Classifier
