@@ -20,7 +20,7 @@ import pkg_resources as pkg
 import torch
 import torchvision
 import yaml
-import networkx as nx
+# import networkx as nx
 
 from utils.google_utils import gsutil_getsize
 from utils.metrics import fitness
