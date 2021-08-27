@@ -20,6 +20,7 @@ import pkg_resources as pkg
 import torch
 import torchvision
 import yaml
+import networkx as nx
 
 from utils.google_utils import gsutil_getsize
 from utils.metrics import fitness
@@ -616,8 +617,28 @@ def non_max_suppression(prediction, conf_thres=0.01, iou_thres=0.25, classes=Non
             x[i, :4] = torch.mm(weights, x[:, :4]).float() / weights.sum(1, keepdim=True)  # merged boxes
             if redundant:
                 i = i[iou.sum(1) > 1]  # require redundancy
+        
+        x = x[i]
 
-        output[xi] = x[i]
+        #########################################
+        # ## eliminate multi-boxes (dvaughn)
+        MIN_IOU = 0.75
+        boxes, conf = x[:,:4], x[:,4]
+        iou = box_iou(boxes, boxes).cpu().numpy() > MIN_IOU
+        G = nx.from_numpy_matrix(iou, create_using=nx.Graph)
+        clqs = list(nx.clique.find_cliques(G))
+        keep = []
+        ## each clque represents a collection of mutually overlapping boxes
+        for clq in clqs:
+            if len(clq)==1:
+                keep.append(clq[0])
+            else: ## keep highest confidence box
+                i = conf[clq].argmax()
+                keep.append(clq[i])
+        x = x[keep]
+        #########################################
+
+        output[xi] = x#[i]
         if (time.time() - t) > time_limit:
             print(f'WARNING: NMS time limit {time_limit}s exceeded')
             break  # time limit exceeded

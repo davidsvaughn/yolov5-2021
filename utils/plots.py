@@ -101,8 +101,9 @@ def plot_one_box(x, img, color=None, label=None, line_thickness=None, yoff=0):
     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
     cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
     if label:
+        fontScale = tl/4
         tf = max(tl - 1, 1)  # font thickness
-        t_size = cv2.getTextSize(label, 0, fontScale=tl / 2, thickness=tf)[0]
+        t_size = cv2.getTextSize(label, 0, fontScale=fontScale, thickness=tf)[0]
         c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
 
         c1 = (c1[0]-t_size[0]*yoff, c1[1])
@@ -111,7 +112,7 @@ def plot_one_box(x, img, color=None, label=None, line_thickness=None, yoff=0):
         cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
         ox, oy = c1[0], c1[1] - 2
         oy = max(12, oy)
-        cv2.putText(img, label, (ox, oy), 0, tl / 2, [0, 0, 0], thickness=tf, lineType=cv2.LINE_AA)
+        cv2.putText(img, label, (ox, oy), 0, fontScale, [0, 0, 0], thickness=tf, lineType=cv2.LINE_AA)
 
 def crop_one_box(x, img):
     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
@@ -161,33 +162,19 @@ def plot_wh_methods():  # from utils.plots import *; plot_wh_methods()
     plt.legend()
     fig.savefig('comparison.png', dpi=200)
 
-# def output_to_target(output, idx=[]):
-#     # Convert model output to target format [batch_id, class_id, x, y, w, h, conf]
-#     targets = []
-#     for i, o in enumerate(output):
-#         k = idx[i]
-#         if k is not None:
-#             o = o[k,:]
-#         for *box, conf, cls in o.cpu().numpy():
-#             targets.append([i, cls, *list(*xyxy2xywh(np.array(box)[None])), conf])
-#     return np.array(targets)
-
 def output_to_target(output, idx=[], idx_fp=None, idx_conf=None):
     # Convert model output to target format [batch_id, class_id, x, y, w, h, conf]
     targets = []
     for i, o in enumerate(output):
         k = idx[i]
         if k is not None:
-            if idx_fp is not None:
-                if idx_conf is not None and idx_conf.cpu().numpy().mean()<1:
-                    print('huh')
-                k = idx_fp[k]
             o = o[k,:]
-        else:
-            if idx_fp is not None:
-                if idx_conf is not None and idx_conf.cpu().numpy().mean()<1:
-                    o = o[idx_conf,:]
-                o = o[idx_fp,:]
+        ######################
+        if idx_fp is not None:
+            if idx_conf is not None and idx_conf.cpu().numpy().mean()<1:
+                o = o[idx_conf,:]
+            o = o[idx_fp,:]
+        ######################
         for *box, conf, cls in o.cpu().numpy():
             targets.append([i, cls, *list(*xyxy2xywh(np.array(box)[None])), conf])
     return np.array(targets)
@@ -257,7 +244,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
                 else:
                     label = False
                 if labels or conf[j] > 0.25:  # 0.25 conf thresh
-                    label = ('%s' % cls if labels else '%.1f' % (conf[j])) if not label else '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
+                    label = (None if labels else '%.1f' % (conf[j])) if not label else '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
                     plot_one_box(box, mosaic, label=label, color=color, line_thickness=1)#tl
                     if only_labeled:
                         sv = True

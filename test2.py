@@ -175,6 +175,9 @@ def test(data,
                 img_box = img_box.to(device)
                 io2s = box_io2(img_box, pred[:, :4])
                 k = (io2s > 0.95).nonzero(as_tuple=True)[1]
+                # z = torch.zeros(pred.shape[0], dtype=torch.bool)
+                # z[k] = True
+                # k = z
                 pred = pred[k,:]
                 idx.append(k)
             else:
@@ -263,14 +266,15 @@ def test(data,
             # stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls, pred_target_dims.cpu(), target_dims.cpu()))
 
             # FP/FN counts (per image)
-            corr = correct.cpu().numpy()
-            idx_conf = pred[:, 4].cpu()>conf_thres
-            if idx_conf.cpu().numpy().mean()<1:
-                corr = corr[idx_conf]
-            tp = corr[:,0].sum()
-            fp, fn = len(corr)-tp, len(tcls)-tp
-            if log_errors>-1 and fp+fn > log_errors:
-                error_log.append(path.stem)
+            if log_errors>-1:
+                corr = correct.cpu().numpy()
+                idx_conf = pred[:, 4].cpu()>conf_thres
+                if idx_conf.cpu().numpy().mean()<1:
+                    corr = corr[idx_conf]
+                tp = corr[:,0].sum()
+                fp, fn = len(corr)-tp, len(tcls)-tp
+                if fp+fn > log_errors:
+                    error_log.append(path.stem)
 
 
         # Plot images
