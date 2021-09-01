@@ -1,6 +1,7 @@
 import argparse
-import time
+import time, os
 from pathlib import Path
+import yaml
 
 import cv2
 import torch
@@ -41,6 +42,9 @@ def expand_pole(xyxy, off=-0.05):
     h += 2*off*h
     return (xywh2xyxy(torch.tensor([x,y,w,h]).view(1, 4))).view(-1)
 
+def expand_crop(xyxy, name):
+    return expand_pole(xyxy) if name=='expand_pole' else expand_mushroom(xyxy)
+
 def scale_img(img, scale, pad=10):
     if scale<0:
         scale = -scale
@@ -58,46 +62,52 @@ def crop_one_box(x, img):
     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
     return img[c1[1]:c2[1], c1[0]:c2[0]]
 
-def load_classifier(model_file, fc, device):
-    model = models.resnet34()
+def fix_state_dict(modfile):
+    state_dict = torch.load(modfile)
+    # create new OrderedDict that does not contain `module.`
+    from collections import OrderedDict
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        # name = k[7:] # remove `module.`
+        new_state_dict[k.lstrip('module.')] = v
+    # torch.save(new_state_dict, modfile)
+    return new_state_dict
+
+def load_classifier(model_file, cfg, device):
+    model = models.resnet34() if cfg.resnet==34 else models.resnet50()
     num_ftrs = model.fc.in_features
-    if fc==0:
+    if cfg.fc==0:
         model.fc = nn.Sequential(nn.Linear(num_ftrs, 2),
                                 nn.LogSoftmax(dim=1))
     else:
-        model.fc = nn.Sequential(nn.Linear(num_ftrs, fc),
+        model.fc = nn.Sequential(nn.Linear(num_ftrs, cfg.fc),
                                 nn.ReLU(),
                                 nn.Dropout(0.1),
-                                nn.Linear(fc, 2),
+                                nn.Linear(cfg.fc, 2),
                                 nn.LogSoftmax(dim=1))
+    model = torch.nn.DataParallel(model)
     model.load_state_dict(torch.load(model_file))
+    # model.load_state_dict(fix_state_dict(model_file))
     model.to(device).eval()
     return model
 
 def fixname(str):
     return str.replace(' ','_').lower()
 
-def load_classifiers(names, device):
-    model_root = '/home/david/code/phawk/data/fpl/damage/rgb/resnet/python/models'
+def load_classifiers(resnet_path, class_names, device):
+    config_file = os.path.join(resnet_path, 'config.yaml')
+    with open(config_file) as f:
+        config = yaml.safe_load(f)
     models = adict()
-    models[1] = adict({'name':fixname(names[1]), 'scale':-128, 'fc':512, 'func':expand_pole})   # Concrete Pole
-    models[6] = adict({'name':fixname(names[6]), 'scale':256, 'fc':0, 'func':expand_mushroom})  # Mushroom Insulator
-    models[7] = adict({'name':fixname(names[7]), 'scale':256, 'fc':64})    # Fuse Switch Polymer
-    models[10] = adict({'name':fixname(names[10]), 'scale':256, 'fc':512})  # Porcelain Dead-end Insulator
-    models[11] = adict({'name':fixname(names[11]), 'scale':256, 'fc':256})    # Porcelain Insulator
-    models[16] = adict({'name':fixname(names[16]), 'scale':256, 'fc':128})  # Surge Arrester
-    models[17] = adict({'name':fixname(names[17]), 'scale':256, 'fc':64})   # Transformer
-    models[18] = adict({'name':fixname(names[18]), 'scale':512, 'fc':256})  # Wood Crossarm
-    models[19] = adict({'name':fixname(names[19]), 'scale':-128, 'fc':256, 'func':expand_pole}) # Wood Pole
-    models[20] = adict({'name':fixname(names[20]), 'scale':256, 'fc':256})  # Fuse Switch Porcelain
-
-    for c in models.keys():
-        models[c].model = load_classifier(f'{model_root}/{models[c].name}/{models[c].name}.pt', models[c].fc, device)
+    for i,name in enumerate([fixname(name) for name in class_names]):
+        if name in config:
+            models[i] = adict(config[name])
+            models[i].model = load_classifier(os.path.join(resnet_path, f'{name}.pt'), models[i], device)
     return models
 
 @torch.no_grad()
 def detect(opt):
-    source, weights, view_img, save_txt, imgsz = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size
+    source, weights, resnet, view_img, save_txt, imgsz = opt.source, opt.weights, opt.resnet, opt.view_img, opt.save_txt, opt.img_size
     save_img = not opt.nosave and not source.endswith('.txt')  # save inference images
     webcam = source.isnumeric() or source.endswith('.txt') or source.lower().startswith(
         ('rtsp://', 'rtmp://', 'http://', 'https://'))
@@ -121,8 +131,10 @@ def detect(opt):
         model.half()  # to FP16
 
     # Second-stage classifier
-    classify = True
-    models = load_classifiers(names, device)  # initialize
+    classify = False
+    if resnet:
+        classify = True
+        models = load_classifiers(resnet, names, device)  # initialize
 
     # Set Dataloader
     vid_path, vid_writer = None, None
@@ -157,10 +169,8 @@ def detect(opt):
                                     max_det=opt.max_det)
         t2 = time_synchronized()
 
-        # Apply Classifier
-        # pred = apply_classifier(pred, modelc, img, im0s)
-
         # Process detections
+        first = names.copy() if names else None
         for i, det in enumerate(pred):  # detections per image
             if webcam:  # batch_size >= 1
                 p, s, im0, frame = path[i], f'{i}: ', im0s[i].copy(), dataset.count
@@ -191,34 +201,34 @@ def detect(opt):
                         continue
                     modelc = models[c].model
                     scale = models[c].scale
-                    if 'func' in models[c]:
-                        xyxy = models[c].func(xyxy)
+                    if 'pre' in models[c]:
+                        xyxy = expand_crop(xyxy, models[c].pre)
                         xyxy = clamp(xyxy, gn*0, gn)
-                    img_crop = crop_one_box(xyxy, imc)
-                    ################
-                    # label = None if opt.hide_labels else (names[c] if opt.hide_conf else f'{names[c]} {conf:.2f}')
-                    # print(label)
-                    # cv2.imwrite(f'/home/david/code/phawk/data/fpl/damage/rgb/detect/aaa.jpg', img_crop)
-                    ################
-                    img_crop = img_crop[:, :, ::-1] ## RGB->BGR (resnet models were trained on BGR inputs)
+                    img_crop = crop_one_box(xyxy, imc)[:, :, ::-1] ## RGB->BGR (resnet models were trained on BGR inputs)
                     img_crop = torch.FloatTensor(img_crop.transpose(2,0,1)*1/255.)
                     img_crop = scale_img(img_crop, scale=scale)
-                    ######################################
-                    # mu = img_crop.view(3,-1).mean(1)
-                    # print(f'{p.stem}')
-                    # print(mu)
-                    ######################################
-                    prob_damage = modelc(torch.unsqueeze(img_crop, 0).to(device)).cpu().numpy()[1] #.argmax(1).cpu().numpy()
+
+                    prob = torch.exp(modelc(torch.unsqueeze(img_crop, 0).to(device)).squeeze()[-1]).cpu().numpy()
+                    if not opt.save_prob and prob < models[c].th: ## if prob < damage threshold for component...
+                        continue ## ... then only print labels for damaged components
 
                     if save_txt:  # Write to file
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                         line = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)  # label format
+                        if opt.save_prob:
+                            line = (cls, *xywh, conf, prob) if opt.save_conf else (cls, *xywh, prob)  # label format
                         with open(txt_path + '.txt', 'a') as f:
                             f.write(('%g ' * len(line)).rstrip() % line + '\n')
 
                     if save_img or opt.save_crop or view_img:  # Add bbox to image
-                        c = int(cls)  # integer class
-                        label = None if opt.hide_labels else (names[c] if opt.hide_conf else f'{names[c]} {conf:.2f}')
+                        label = True
+                        if first and first[c]:
+                            first[c]=0
+                        else:
+                            label = False
+                        prob_label = '' if opt.hide_prob else f' {prob:.2f}'
+                        name = f'{names[c]} ' if label else ''
+                        label = None if opt.hide_labels else (f'{name}{prob_label}' if opt.hide_conf else f'{name}{conf:.2f}{prob_label}')
                         plot_one_box(xyxy, im0, label=label, color=colors(c, True), line_thickness=opt.line_thickness)
                         if opt.save_crop:
                             save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
@@ -260,6 +270,7 @@ def detect(opt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', nargs='+', type=str, default='yolov5s.pt', help='model.pt path(s)')
+    parser.add_argument('--resnet', type=str, default='', help='path to resnet models') 
     parser.add_argument('--source', type=str, default='data/images', help='source')  # file/folder, 0 for webcam
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.3, help='object confidence threshold')
@@ -269,6 +280,7 @@ if __name__ == '__main__':
     parser.add_argument('--view-img', action='store_true', help='display results')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
+    parser.add_argument('--save-prob', action='store_true', help='save damage probabilities in --save-txt labels')
     parser.add_argument('--save-crop', action='store_true', help='save cropped prediction boxes')
     parser.add_argument('--nosave', action='store_true', help='do not save images/videos')
     parser.add_argument('--classes', nargs='+', type=int, help='filter by class: --class 0, or --class 0 2 3')
@@ -278,9 +290,10 @@ if __name__ == '__main__':
     parser.add_argument('--project', default='runs/detect', help='save results to project/name')
     parser.add_argument('--name', default='exp', help='save results to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
-    parser.add_argument('--line-thickness', default=3, type=int, help='bounding box thickness (pixels)')
+    parser.add_argument('--line-thickness', default=0, type=int, help='bounding box thickness (pixels)')
     parser.add_argument('--hide-labels', default=False, action='store_true', help='hide labels')
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
+    parser.add_argument('--hide-prob', default=False, action='store_true', help='hide damage probabilities')
     opt = parser.parse_args()
     print(opt)
     check_requirements(exclude=('tensorboard', 'pycocotools', 'thop'))

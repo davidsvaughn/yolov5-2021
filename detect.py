@@ -3,13 +3,14 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 
 from models.experimental import attempt_load
 from utils.datasets import LoadStreams, LoadImages
 from utils.general import check_img_size, check_requirements, check_imshow, non_max_suppression, apply_classifier, \
-    scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path, save_one_box
+    scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path, save_one_box, box_ios
 from utils.plots import colors, plot_one_box
 from utils.torch_utils import select_device, load_classifier, time_synchronized
 
@@ -38,11 +39,17 @@ def detect(opt):
     if half:
         model.half()  # to FP16
 
-    # Second-stage classifier
-    classify = False
-    if classify:
-        modelc = load_classifier(name='resnet101', n=2)  # initialize
-        modelc.load_state_dict(torch.load('weights/resnet101.pt', map_location=device)['model']).to(device).eval()
+    # Hotspot Model (optional)
+    thermal = opt.thermal or opt.hotspot
+    if opt.hotspot:
+        hmodel = attempt_load(opt.hotspot, map_location=device)  # load FP32 model
+        if half:
+            hmodel.half()  # to FP16
+        names.append('Hotspot') ## add extra label
+    
+    # (Contrast Limited) Adaptive Histogram Equalization (....done at model training time)
+    if thermal:
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
 
     # Set Dataloader
     vid_path, vid_writer = None, None
@@ -56,37 +63,72 @@ def detect(opt):
     # Run inference
     if device.type != 'cpu':
         model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
+        if opt.hotspot:
+            hmodel(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(hmodel.parameters())))  # run once
     t0 = time.time()
     for path, img, im0s, vid_cap in dataset:
+
+        if thermal:
+            ## apply Adaptive Histogram Equalization (CLAHE)
+            himg = img.copy() if opt.hotspot else img
+            # s = f'img{np.random.randint(0,1000)}'
+            img = img.transpose(1,2,0)
+            # cv2.imwrite(f'/home/product/dvaughn/data/fpl/thermal/stuff/{s}.jpg', img)
+            img = clahe.apply(img[:,:,0].astype(np.uint8))[:,:,None] * np.ones(3, dtype=int)[None, None, :]
+            # cv2.imwrite(f'/home/product/dvaughn/data/fpl/thermal/stuff/{s}_clahe.jpg', img)
+            img = img.transpose(2,0,1)
+            im0s = (clahe.apply(im0s[:,:,0].astype(np.uint8))[:,:,None] * np.ones(3, dtype=int)[None, None, :]).astype(np.uint8)
+
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         if img.ndimension() == 3:
             img = img.unsqueeze(0)
 
-        # Inference
         t1 = time_synchronized()
+        # Component Inference
         pred = model(img, augment=opt.augment)[0]
+        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, opt.classes, max_det=opt.max_det)
 
-        # Apply NMS
-        pred = non_max_suppression(pred,
-                            opt.conf_thres,
-                            opt.iou_thres,
-                            opt.classes,
-                            # opt.agnostic_nms, ## use default (True) instead
-                            max_det=opt.max_det)
+        # Hotspot Inference
+        if opt.hotspot:
+            himg = torch.from_numpy(himg).to(device)
+            himg = himg.half() if half else himg.float()  # uint8 to fp16/32
+            himg /= 255.0  # 0 - 255 to 0.0 - 1.0
+            if himg.ndimension() == 3:
+                himg = himg.unsqueeze(0)
+            hpred = hmodel(himg, augment=opt.augment)[0]
+            hpred = non_max_suppression(hpred, opt.hconf_thres, opt.iou_thres)
         t2 = time_synchronized()
 
-        # Apply Classifier
-        if classify:
-            pred = apply_classifier(pred, modelc, img, im0s)
-
         # Process detections
+        first = names.copy() if names else None
         for i, det in enumerate(pred):  # detections per image
             if webcam:  # batch_size >= 1
                 p, s, im0, frame = path[i], f'{i}: ', im0s[i].copy(), dataset.count
             else:
                 p, s, im0, frame = path, '', im0s.copy(), getattr(dataset, 'frame', 0)
+
+            ##### testing123......
+            # if '2b731fab-e1b3-3ab1-b0fe-0db2e896f512' in Path(p).stem:
+            #     print('stop')
+
+            # Find hotspot-component overlaps
+            if opt.hotspot:
+                dh1 = None
+                hdet = hpred[i]
+                if len(det) and len(hdet):
+                    boxes = det[:, :4]
+                    spots = hdet[:, :4]
+                    ## ios == "Intersection-Over-Smaller" (for when box1 is *inside* box2.... gives high score)
+                    ios = box_ios(spots, boxes).cpu().numpy()
+                    ios = (ios > opt.ios_thres)
+                    dh1 = (ios.sum(0)>0).astype(np.int32)  # components that do overlap with a hotspot
+                    hd0 = (ios.sum(1)==0) # hotspots that don't overlap with a component
+                elif len(hdet):
+                    hd0 = np.ones(len(hdet))>0
+                elif len(det):
+                    dh1 = np.zeros(len(det))
 
             p = Path(p)  # to Path
             save_path = str(save_dir / p.name)  # img.jpg
@@ -94,6 +136,7 @@ def detect(opt):
             s += '%gx%g ' % img.shape[2:]  # print string
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             imc = im0.copy() if opt.save_crop else im0  # for opt.save_crop
+
             if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
@@ -104,17 +147,60 @@ def detect(opt):
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
                 # Write results
-                for *xyxy, conf, cls in reversed(det):
+                n = len(det)
+                for i, (*xyxy, conf, cls) in enumerate(reversed(det)):
+                    hot = dh1[n-i-1] if (opt.hotspot and dh1 is not None) else None
+                    
                     if save_txt:  # Write to file
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                         line = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)  # label format
+                        if opt.hotspot:
+                            line = (cls, *xywh, conf, hot) if opt.save_conf else (cls, *xywh, hot)  # label format
                         with open(txt_path + '.txt', 'a') as f:
                             f.write(('%g ' * len(line)).rstrip() % line + '\n')
 
                     if save_img or opt.save_crop or view_img:  # Add bbox to image
                         c = int(cls)  # integer class
-                        label = None if opt.hide_labels else (names[c] if opt.hide_conf else f'{names[c]} {conf:.2f}')
+                        label = True
+                        if first and first[c]:
+                            first[c]=0
+                        else:
+                            label = False
+                        name = f'{names[c]} ' if label else ''
+                        label = None if opt.hide_labels else (name if opt.hide_conf else f'{name}{conf:.2f}')
                         plot_one_box(xyxy, im0, label=label, color=colors(c, True), line_thickness=opt.line_thickness)
+                        if opt.save_crop:
+                            save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
+
+            ## hotspot labels 
+            if opt.hotspot and len(hdet):
+                # Rescale boxes from img_size to im0 size
+                hdet[:, :4] = scale_coords(img.shape[2:], hdet[:, :4], im0.shape).round()
+
+                # Write results
+                n = len(hdet)
+                N = len(names)-1
+                for i, (*xyxy, conf, cls) in enumerate(reversed(hdet)):
+                    no_overlap = hd0[n-i-1] ## does hotspot overlap with component?
+
+                    # only write label if no overlap
+                    if no_overlap and save_txt:  # Write to file
+                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                        line = (cls+N, *xywh, conf, 0) if opt.save_conf else (cls+N, *xywh, 0)  # label format
+                        with open(txt_path + '.txt', 'a') as f:
+                            f.write(('%g ' * len(line)).rstrip() % line + '\n')
+                    
+                    # draw boxes for all hotspots
+                    if save_img or opt.save_crop or view_img:  # Add bbox to image
+                        c = int(cls+N)  # integer class
+                        label = True
+                        if first and first[c]:
+                            first[c]=0
+                        else:
+                            label = False
+                        name = f'{names[c]} ' if label else ''
+                        label = None if opt.hide_labels else (name if opt.hide_conf else f'{name}{conf:.2f}')
+                        plot_one_box(xyxy, im0, label=label, color=colors(c, True), line_thickness=opt.line_thickness, yoff=1, xoff=1)
                         if opt.save_crop:
                             save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
 
@@ -154,11 +240,15 @@ def detect(opt):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', nargs='+', type=str, default='yolov5s.pt', help='model.pt path(s)')
+    parser.add_argument('--weights', type=str, help='component model weights')
+    parser.add_argument('--thermal', action='store_true', help='thermal images')
+    parser.add_argument('--hotspot', default='', type=str, help='hotspot model weights')
     parser.add_argument('--source', type=str, default='data/images', help='source')  # file/folder, 0 for webcam
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.3, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.3, help='IOU threshold for NMS')
+    parser.add_argument('--conf-thres', type=float, default=0.25, help='component confidence threshold')
+    parser.add_argument('--hconf-thres', type=float, default=0.1, help='hotspot confidence threshold')
+    parser.add_argument('--iou-thres', type=float, default=0.25, help='IOU threshold for NMS')
+    parser.add_argument('--ios-thres', type=float, default=0.2, help='IOS threshold for hotspot-component overlap')
     parser.add_argument('--max-det', type=int, default=1000, help='maximum number of detections per image')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', action='store_true', help='display results')
@@ -173,12 +263,12 @@ if __name__ == '__main__':
     parser.add_argument('--project', default='runs/detect', help='save results to project/name')
     parser.add_argument('--name', default='exp', help='save results to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
-    parser.add_argument('--line-thickness', default=3, type=int, help='bounding box thickness (pixels)')
+    parser.add_argument('--line-thickness', default=0, type=int, help='bounding box thickness (pixels)')
     parser.add_argument('--hide-labels', default=False, action='store_true', help='hide labels')
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     opt = parser.parse_args()
     print(opt)
-    check_requirements(exclude=('tensorboard', 'pycocotools', 'thop'))
+    # check_requirements(exclude=('tensorboard', 'pycocotools', 'thop'))
 
     if opt.update:  # update all models (to fix SourceChangeWarning)
         for opt.weights in ['yolov5s.pt', 'yolov5m.pt', 'yolov5l.pt', 'yolov5x.pt']:

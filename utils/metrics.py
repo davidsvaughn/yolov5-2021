@@ -72,6 +72,8 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
             recall = tpc / (n_l + 1e-16)  # recall curve
             r[ci] = np.interp(-px, -conf[i], recall[:, 0], left=0)  # negative x, xp because xp decreases
 
+            z = -conf[i]
+
             # Precision
             precision = tpc / (tpc + fpc)  # precision curve
             p[ci] = np.interp(-px, -conf[i], precision[:, 0], left=1)  # p at pr_score
@@ -89,6 +91,10 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
         plot_mc_curve(px, f1, Path(save_dir) / 'F1_curve.png', names, ylabel='F1')
         plot_mc_curve(px, p, Path(save_dir) / 'P_curve.png', names, ylabel='Precision')
         plot_mc_curve(px, r, Path(save_dir) / 'R_curve.png', names, ylabel='Recall')
+
+    # save p/r matrices
+    np.savetxt(Path(save_dir) / 'P.txt', p.T, fmt='%0.6f')
+    np.savetxt(Path(save_dir) / 'R.txt', r.T, fmt='%0.6f')
 
     ## PER CLASS F1 maximization
     if ct is not None and isinstance(ct, list):
