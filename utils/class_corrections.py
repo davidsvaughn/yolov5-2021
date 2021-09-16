@@ -25,12 +25,18 @@ CONTAINED_CLASS_MAPPING = {
         13: 2,  # inside "entire crossarm" -> "crossarm cracked/broken"
         14: 1,  # inside "entire pole" -> "cracked pole"
     },
-    # Testing with FPL model of AEP images
-    # "Polymer Insulator"
+    # "rotten wood"
     9: {
-        5: 8,  # inside "Steel Crossarm" -> "Polymer Dead-end Insulator"
-        19: 8,  # inside "Wood Pole" -> "Polymer Dead-end Insulator"
-    }
+        12: 0,  # inside "entire brace" -> "brace cracked/broken"
+        13: 2,  # inside "entire crossarm" -> "crossarm cracked/broken"
+        14: 1,  # inside "entire pole" -> "cracked pole"
+    },
+    # # Testing with FPL model on AEP images
+    # # "Polymer Insulator"
+    # 9: {
+    #     5: 8,  # inside "Steel Crossarm" -> "Polymer Dead-end Insulator"
+    #     19: 8,  # inside "Wood Pole" -> "Polymer Dead-end Insulator"
+    # }
 }
 
 
