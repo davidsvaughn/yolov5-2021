@@ -8,6 +8,7 @@ import torch
 import torch.backends.cudnn as cudnn
 
 from models.experimental import attempt_load
+from utils.class_corrections import get_corrected_class, hide_container_object
 from utils.datasets import LoadStreams, LoadImages
 from utils.general import check_img_size, check_requirements, check_imshow, non_max_suppression, apply_classifier, \
     scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path, save_one_box, box_ios
@@ -149,28 +150,37 @@ def detect(opt):
                 # Write results
                 n = len(det)
                 for i, (*xyxy, conf, cls) in enumerate(reversed(det)):
-                    hot = dh1[n-i-1] if (opt.hotspot and dh1 is not None) else None
-                    
-                    if save_txt:  # Write to file
-                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                        line = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)  # label format
-                        if opt.hotspot:
-                            line = (cls, *xywh, conf, hot) if opt.save_conf else (cls, *xywh, hot)  # label format
-                        with open(txt_path + '.txt', 'a') as f:
-                            f.write(('%g ' * len(line)).rstrip() % line + '\n')
 
-                    if save_img or opt.save_crop or view_img:  # Add bbox to image
-                        c = int(cls)  # integer class
-                        label = True
-                        if first and first[c]:
-                            first[c]=0
-                        else:
-                            label = False
-                        name = f'{names[c]} ' if label else ''
-                        label = None if opt.hide_labels else (name if opt.hide_conf else f'{name}{conf:.2f}')
-                        plot_one_box(xyxy, im0, label=label, color=colors(c, True), line_thickness=opt.line_thickness)
-                        if opt.save_crop:
-                            save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
+                    # Correct some classes if they're inside a bounding box of a particular class?
+                    if opt.correct_classes:
+                        cls = get_corrected_class(cls=cls, xyxy=xyxy, det=det, names=names)
+
+                    # If it's not a container object for corrected classes, that needs to be hidden,
+                    # write detection to file, image, etc.
+                    if not (opt.correct_classes and opt.hide_containers and hide_container_object(cls)):
+
+                        hot = dh1[n-i-1] if (opt.hotspot and dh1 is not None) else None
+
+                        if save_txt:  # Write to file
+                            xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                            line = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)  # label format
+                            if opt.hotspot:
+                                line = (cls, *xywh, conf, hot) if opt.save_conf else (cls, *xywh, hot)  # label format
+                            with open(txt_path + '.txt', 'a') as f:
+                                f.write(('%g ' * len(line)).rstrip() % line + '\n')
+
+                        if save_img or opt.save_crop or view_img:  # Add bbox to image
+                            c = int(cls)  # integer class
+                            label = True
+                            if first and first[c]:
+                                first[c]=0
+                            else:
+                                label = False
+                            name = f'{names[c]} ' if label else ''
+                            label = None if opt.hide_labels else (name if opt.hide_conf else f'{name}{conf:.2f}')
+                            plot_one_box(xyxy, im0, label=label, color=colors(c, True), line_thickness=opt.line_thickness)
+                            if opt.save_crop:
+                                save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
 
             ## hotspot labels 
             if opt.hotspot and len(hdet):
@@ -266,6 +276,8 @@ if __name__ == '__main__':
     parser.add_argument('--line-thickness', default=0, type=int, help='bounding box thickness (pixels)')
     parser.add_argument('--hide-labels', default=False, action='store_true', help='hide labels')
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
+    parser.add_argument('--correct-classes', action='store_true', help='correct classes found inside certain objects')
+    parser.add_argument('--hide-containers', action='store_true', help='hide objects containing corrected classes')
     opt = parser.parse_args()
     print(opt)
     # check_requirements(exclude=('tensorboard', 'pycocotools', 'thop'))

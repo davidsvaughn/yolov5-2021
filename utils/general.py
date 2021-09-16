@@ -460,6 +460,23 @@ def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=
         return iou  # IoU
 
 
+def bbox_io1(box, boxes):
+    boxes = boxes.T
+    xA = np.maximum(box[0], boxes[0])
+    yA = np.maximum(box[1], boxes[1])
+    xB = np.minimum(box[2], boxes[2])
+    yB = np.minimum(box[3], boxes[3])
+
+    interW = xB - xA
+    interH = yB - yA
+    z = (interW > 0) * (interH > 0)
+    interArea = z * interW * interH
+
+    boxAArea = (box[2] - box[0]) * (box[3] - box[1])
+    io1 = interArea / boxAArea
+    return io1
+
+
 def box_iou(box1, box2):
     # https://github.com/pytorch/vision/blob/master/torchvision/ops/boxes.py
     """
