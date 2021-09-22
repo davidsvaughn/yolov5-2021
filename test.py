@@ -18,6 +18,11 @@ from utils.plots import plot_images, output_to_target, plot_study_txt
 from utils.torch_utils import select_device, time_synchronized
 import ast
 
+def save_list(lst, fn):
+    with open(fn, 'w') as f:
+        for item in lst:
+            f.write("%s\n" % item)
+
 @torch.no_grad()
 def test(data,
          weights=None,
@@ -44,10 +49,12 @@ def test(data,
          opt=None):
     
     print_size, print_batches = 0, 3
+    log_errors = -1
     if opt is not None:
         print_size = opt.print_size
         print_batches = opt.print_batches
         max_by_class = opt.max_by_class
+        log_errors = opt.log_errors
         ct = ast.literal_eval(opt.ct)
         if len(ct)==0: ct=None
     else:
@@ -62,7 +69,8 @@ def test(data,
 
     else:  # called directly
         set_logging()
-        device = select_device(opt.device, batch_size=batch_size)
+        # device = select_device(opt.device, batch_size=batch_size)
+        device = select_device(opt.device, batch_size=2)
 
         # Directories
         save_dir = increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)  # increment run
@@ -117,6 +125,7 @@ def test(data,
     p, r, f1, mp, mr, map50, map, t0, t1, mf1 = 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
+    error_log = []
     for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
         img = img.to(device, non_blocking=True)
         img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -137,13 +146,16 @@ def test(data,
         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
         lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
         t = time_synchronized()
-        output = non_max_suppression(inf_out, labels=lb, multi_label=False, agnostic=single_cls)#, conf_thres=conf_thres, iou_thres=iou_thres)
+        output = non_max_suppression(inf_out, labels=lb, multi_label=False, agnostic=True)#, conf_thres=conf_thres, iou_thres=iou_thres)
         t1 += time_synchronized() - t
 
         # Statistics per image
         idx = []
         for si, pred in enumerate(output):
             labels = targets[targets[:, 0] == si, 1:]
+            # Dims of all target boxes (in pixels)
+            target_dims = targets[targets[:, 0] == si, -2:]
+
             nl = len(labels)
             tcls = labels[:, 0].tolist() if nl else []  # target class
             path = Path(paths[si])
@@ -174,6 +186,10 @@ def test(data,
                 pred[:, 5] = 0
             predn = pred.clone()
             scale_coords(img[si].shape[1:], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
+
+            # Dims of all pred boxes (in pixels)
+            pred_target_dims = torch.zeros(pred.shape[0], 4, dtype=torch.float32, device=device)
+            pred_target_dims[:,:2] = pred[:,2:4]-pred[:,:2]
 
             # Append to text file
             if save_txt:
@@ -233,23 +249,63 @@ def test(data,
                         # Append detections
                         detected_set = set()
                         for j in (ious > iouv[0]).nonzero(as_tuple=False):
-                            d = ti[i[j]]  # detected target
+                            d = ti[i[j]]  # detected target... index into target array....
                             if d.item() not in detected_set:
                                 detected_set.add(d.item())
                                 detected.append(d)
                                 correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
+                                k = pi[j] ## index into pred array.....
+                                pred_target_dims[k,2:] = target_dims[d]
                                 if len(detected) == nl:  # all targets already located in image
                                     break
 
             # Append statistics (correct, conf, pcls, tcls)
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
+            # stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls, pred_target_dims.cpu(), target_dims.cpu()))
+
+            # FP/FN counts (per image)
+            if log_errors>-1:
+                corr = correct.cpu().numpy()
+                idx_conf = pred[:, 4].cpu()>conf_thres
+                if idx_conf.cpu().numpy().mean()<1:
+                    corr = corr[idx_conf]
+                tp = corr[:,0].sum()
+                fp, fn = len(corr)-tp, len(tcls)-tp
+                if fp+fn > log_errors:
+                    error_log.append(path.stem)
+
 
         # Plot images
         if plots and batch_i < print_batches:
-            f = save_dir / f'test_batch{batch_i}_labels.jpg'  # labels
-            Thread(target=plot_images, args=(img, targets, paths, f, names, print_size), daemon=True).start()
-            f = save_dir / f'test_batch{batch_i}_pred.jpg'  # predictions
-            Thread(target=plot_images, args=(img, output_to_target(output, idx), paths, f, names, print_size), daemon=True).start()
+            prefix = Path(paths[0]).stem if batch_size==1 else f'test_batch{batch_i}'
+            f1 = save_dir / f'{prefix}_labels.jpg'  # labels
+            thread1 = Thread(target=plot_images, args=(img, targets, paths, f1, names, print_size), daemon=True)
+            f2 = save_dir / f'{prefix}_pred.jpg'  # predictions
+            thread2 = Thread(target=plot_images, args=(img, output_to_target(output, idx), paths, f2, names, print_size), daemon=True)
+            thread1.start()
+            thread1.join()
+            thread2.start()
+            thread2.join()
+            ##################################
+            # display fn and fp boxes only
+            if log_errors>-1 and batch_size==1:
+                ## fn boxes...
+                if fn>0:
+                    idx_fn = np.ones(len(targets))
+                    for d in detected:
+                        idx_fn[d.item()]=0
+                    idx_fn = np.nonzero(idx_fn)[0]
+                    f = save_dir / f'{prefix}_fn.jpg'  # labels
+                    thread = Thread(target=plot_images, args=(img, targets[idx_fn], paths, f, names, print_size, 16, True), daemon=True)
+                    thread.start()
+                    thread.join()
+                ## fp boxes...
+                if fp>0:
+                    idx_fp = ~corr[:,0]
+                    f = save_dir / f'{prefix}_fp.jpg'  # labels
+                    thread = Thread(target=plot_images, args=(img, output_to_target(output, idx, idx_fp, idx_conf), paths, f, names, print_size, 16, True), daemon=True)
+                    thread.start()
+                    thread.join()
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
@@ -317,6 +373,10 @@ def test(data,
     if not training:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
         print(f"Results saved to {save_dir}{s}")
+        # if len(error_log)>0:
+        #     fn = f'{save_dir}/error_log.txt'
+        #     save_list(error_log, fn)
+
     maps = np.zeros(nc) + map
     for i, c in enumerate(ap_class):
         maps[c] = ap[i]
@@ -347,6 +407,7 @@ if __name__ == '__main__':
     parser.add_argument('--max-by-class', action='store_true', help='find class specific confidence thresholds')
     parser.add_argument('--ct', type=str, default='[]', help='class confidence thresholds')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
+    parser.add_argument('--log-errors', type=int, default=-1, help='save image names with FP+FN>log_errors')
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.data = check_file(opt.data)  # check file
