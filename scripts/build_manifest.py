@@ -24,34 +24,9 @@ BLACKLIST = None
 #     aws s3 sync s3://ai-labeling/NextEraConstruction/components_feb_05_2021/completed-labels ./labels
 # '''
 
-## nextera construction
-# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/nextera/construction/mantest/' ## local save directory
-# LABEL_DIR       = DATA_DIR + 'labels/' ## local path where all labels files are located
-# CLASSES_FILE    = DATA_DIR + 'Constructionclasses.txt' ## optional class names file
-# CATEGORIES_FILE = DATA_DIR + 'categories.json' ## where to save categories file locally
-# MANIFEST_FILE   = DATA_DIR + 'manifest.txt' ## where to save manifest file locally
-
-## thermal hotspot
-# S3_IMG_BUCKET   = 's3://ai-secure-sagemaker-bucket/job_resources/distribution_poles_thermal_fpl2/images/'
-# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/models/damages/hotspot/data/' ## local save directory
-# LABEL_DIR       = DATA_DIR + 'labels/' ## local path where all labels files are located
-# CLASSES_FILE    = DATA_DIR + 'coco.names' ## optional class names file
-# CATEGORIES_FILE = DATA_DIR + 'categories.json' ## where to save categories file locally
-# MANIFEST_FILE   = DATA_DIR + 'manifest.txt' ## where to save manifest file locally
-
-## thermal component
-# S3_IMG_BUCKET   = 's3://ai-labeling/FPL/thermal/rgb_labeled/'
-# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/models/damages/fpl-thermdamage-3/' ## local save directory
-# LABEL_DIR       = DATA_DIR + 'labels/' ## local path where all labels files are located
-# CLASSES_FILE    = DATA_DIR + 'coco.names' ## optional class names file
-# CATEGORIES_FILE = DATA_DIR + 'categories.json' ## where to save categories file locally
-# MANIFEST_FILE   = DATA_DIR + 'manifest.txt' ## where to save manifest file locally
-# BLACKLIST = [2, 3, 5, 7, 15, 17, 19, 22, 23]
-
 ## fpl component
 DATA_DIR        = '/home/david/code/phawk/data/fpl/component/models/june28/' ## local save directory
 LABEL_DIR       = DATA_DIR + 'labels/' ## local path where all labels files are located
-
 
 CLASSES_FILE    = DATA_DIR + 'Constructionclasses.txt' ## optional class names file
 CATEGORIES_FILE = DATA_DIR + 'categories.json' ## where to save categories file locally

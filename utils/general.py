@@ -499,6 +499,12 @@ def box_io2(box1, box2):
     inter = (torch.min(box1[:, None, 2:], box2[:, 2:]) - torch.max(box1[:, None, :2], box2[:, :2])).clamp(0).prod(2)
     return inter / area2
 
+def box_io1(box1, box2):
+    '''
+    Return intersection-over-area1 (area of box 1)
+    '''
+    return box_io2(box2, box1).T
+
 def box_ios(box1, box2):
     # https://github.com/pytorch/vision/blob/master/torchvision/ops/boxes.py
     """

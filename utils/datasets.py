@@ -35,11 +35,9 @@ for orientation in ExifTags.TAGS.keys():
     if ExifTags.TAGS[orientation] == 'Orientation':
         break
 
-
 def get_hash(files):
     # Returns a single hash value of a list of files
     return sum(os.path.getsize(f) for f in files if os.path.isfile(f))
-
 
 def exif_size(img):
     # Returns exif-corrected PIL size
@@ -54,7 +52,6 @@ def exif_size(img):
         pass
 
     return s
-
 
 def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=False, cache=False, pad=0.0, rect=False,
                       rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
@@ -118,6 +115,10 @@ class _RepeatSampler(object):
         while True:
             yield from iter(self.sampler)
 
+def read_lines(fn):
+    with open(fn, 'r') as f:
+        lines = [n.strip() for n in f.readlines()]
+    return lines
 
 class LoadImages:  # for inference
     def __init__(self, path, img_size=640, stride=32):
@@ -129,8 +130,10 @@ class LoadImages:  # for inference
                 files = sorted(glob.glob(p, recursive=True))  # glob
             elif os.path.isdir(p):
                 files = sorted(glob.glob(os.path.join(p, '*.*')))  # dir
-            elif os.path.isfile(p):
+            elif os.path.isfile(p) and p.endswith('.jpg'):
                 files = [p]  # files
+            elif os.path.isfile(p) and p.endswith('.txt'):
+                files = read_lines(p)
             else:
                 raise Exception(f'ERROR: {p} does not exist')
 
@@ -185,13 +188,14 @@ class LoadImages:  # for inference
             print(f'image {self.count}/{self.nf} {path}: ', end='')
 
         # Padded resize
-        img = letterbox(img0, self.img_size, stride=self.stride)[0]
+        img, ratio, pad = letterbox(img0, self.img_size, stride=self.stride, scaleup=False)
 
         # Convert
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img)
 
-        return path, img, img0, self.cap
+        # return path, img, img0, self.cap
+        return path, img, img0, self.cap, (ratio, pad)
 
     def new_video(self, path):
         self.frame = 0
@@ -200,7 +204,6 @@ class LoadImages:  # for inference
 
     def __len__(self):
         return self.nf  # number of files
-
 
 class LoadWebcam:  # for inference
     def __init__(self, pipe='0', img_size=640, stride=32):
@@ -558,7 +561,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
             # Letterbox
             shape = self.batch_shapes[self.batch[index]] if self.rect else self.img_size  # final letterboxed shape
+
             img, ratio, pad = letterbox(img, shape, auto=False, scaleup=self.perturb)
+
             shapes = (h0, w0), ((h / h0, w / w0), pad)  # for COCO mAP rescaling
 
             if labels.size:  # normalized xywh to pixel xyxy format

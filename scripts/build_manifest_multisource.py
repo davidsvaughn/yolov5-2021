@@ -13,32 +13,33 @@ from skmultilearn.model_selection import IterativeStratification
 ''' Set these file paths appropriately... '''
 
 
-DATA_DIR        = '/home/david/code/phawk/data/fpl/thermal/models/aug2/' ## local save directory
+DATA_DIR        = '/home/david/code/phawk/data/aep/final/data/' ## local save directory
 MANIFEST_FILE   = DATA_DIR + 'manifest.txt'
 CATEGORIES_FILE = DATA_DIR + 'categories.json'
-CLASSES_FILE    = '/home/david/code/phawk/data/fpl/component/coco.names'
+CLASSES_FILE    = '/home/david/code/phawk/data/aep/final/data/classes.txt'
 
-LABEL_DIRS = ['/home/david/code/phawk/data/fpl/thermal/labels',
+LABEL_DIRS = ['/home/david/code/phawk/data/aep/final/data/labels',
               # '',
               ]
 
-S3_IMG_BUCKETS   = ['s3://ai-labeling/FPL/thermal/aug2/images/',
+S3_IMG_BUCKETS   = ['s3://ai-labeling/AEP/images/',
                     # '',
                     ]
-
 
 '''
 TRAIN/TEST/VAL split... 
 ** don't need to normalize, just give *relative* weightings **
 the code will normalize so sum()==1
 '''
-SPLITS = [22,3,2]
+SPLITS = [20,6,0]
 
 ''' ability to filter out certain classes '''
 BLACKLIST = None
 # BLACKLIST = [2, 3, 5, 7, 15, 17, 19, 22, 23]
     
 txt,jpg = '.txt','.jpg'
+
+# jpg = '.JPG'
 
 ################################################################
 
@@ -176,11 +177,13 @@ def make_categories():
         f.write(ujson.dumps(coco_json))
 
 def make_manifest():  
-        
+    global lab_files
+    
     ## load all labels
     lab_files = []
     for label_dir in LABEL_DIRS:
-        lab_files.extend(glob.glob('{}/*.txt'.format(label_dir)))    
+        lab_files.extend(glob.glob('{}/*.txt'.format(label_dir)))   
+
     
     random.shuffle(lab_files)
     X = np.array(lab_files)[:,None]

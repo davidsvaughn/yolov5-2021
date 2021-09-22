@@ -7,20 +7,14 @@ import ntpath
 import numpy as np
 from concurrent.futures.thread import ThreadPoolExecutor
 
-S3FILE = '/home/david/code/phawk/data/fpl/component/s3/s3urls.txt'
-DST_DIR = '/home/david/code/phawk/data/fpl/component/images'
-
-IMGS = '/home/david/code/phawk/data/fpl/component/images.txt'
-LABS = '/home/david/code/phawk/data/fpl/component/s3/labels.txt'
-
-
 #################################################################
 
 s3_client = boto3.client('s3')
 boto3.setup_default_session(profile_name='ph-ai-dev')  # To switch between different AWS accounts
 
 def download_s3_file(s3_url, dst_dir='.', filename=None, silent=False, overwrite=False):
-    filename = s3_url.split("/").pop()
+    if filename is None:
+        filename = s3_url.split("/").pop()
     out_path = os.path.join(dst_dir, filename)
     if os.path.exists(out_path) and not overwrite:
         return out_path 
@@ -38,13 +32,13 @@ def download_s3_file(s3_url, dst_dir='.', filename=None, silent=False, overwrite
         print(f"Failed to download file from S3: {s3_url}")
         # raise e
 
-def download_image(s3_url):
-    return download_s3_file(s3_url, dst_dir=DST_DIR, silent=False)
+def download_image(s3_url, dst_dir):
+    return download_s3_file(s3_url, dst_dir, silent=False)
 
-def download_images(s3_urls):
+def download_images(s3_urls, dst_dir):
     executor = ThreadPoolExecutor(max_workers=64)
     for s3_url in s3_urls:
-        executor.submit(download_image, s3_url)
+        executor.submit(download_image, s3_url, dst_dir)
     executor.shutdown(wait=True)
     
 def load_list(fn):
@@ -58,6 +52,11 @@ def save_list(lst, fn):
             f.write("%s\n" % item)
 
 ######################################
+
+# S3FILE = '/home/david/code/phawk/data/fpl/component/s3/s3urls.txt'
+# DST_DIR = '/home/david/code/phawk/data/fpl/component/images'
+# IMGS = '/home/david/code/phawk/data/fpl/component/images.txt'
+# LABS = '/home/david/code/phawk/data/fpl/component/s3/labels.txt'
 
 # imgs = load_list(IMGS)
 # labs = load_list(LABS)
@@ -89,7 +88,20 @@ def save_list(lst, fn):
 # imgs = load_list(IMGS)
 # s3bucket = 's3://ai-labeling/FPL/components/May18/images'
 # s3_urls = [f'{s3bucket}/{f}' for f in imgs]
-
-# # s3_urls = load_list(S3FILE)
 # download_images(s3_urls)
 # print('Done.')
+
+######################################
+
+root = '/home/david/code/phawk/data/fpl/thermal/models/aug2M1/test/exp/'
+uids_file = root + 'fpfn.txt'
+dst_dir = root + 'check/rgb'
+
+# s3bucket = 's3://ai-labeling/FPL/thermal/june25/rgb/images_labeled'
+s3bucket = 's3://ai-labeling/FPL/thermal/july6/rgb/images_labeled'
+
+uids = load_list(uids_file)
+s3_urls = [f'{s3bucket}/{f}.jpg' for f in uids]
+download_images(s3_urls, dst_dir)
+print('Done.')
+

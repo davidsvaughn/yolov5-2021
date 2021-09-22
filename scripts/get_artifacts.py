@@ -18,36 +18,11 @@ It will arrange the files in the same structure as 'training_start.py' script in
 '''
 ''' Set the following 3 file paths appropriately.... This example is for FPL Thermal Damage... '''
 
-## FPL Thermal Damage...
-# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/models/damages/fpl-thermdamage-3'
-# MANIFEST_URL    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-thermdamage-3/manifest.txt'
-# MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-thermdamage-3/'
-
-## FPL Thermal Hotspot
-# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/component/thermal_pairs/data/models/damages/hotspot/data'
-# MANIFEST_URL    = 's3://ph-dvaughn-dev/fpl_thermal_hotspot/manifest.txt'
-# MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-thermal-hotspot-1/'
-
-## FPL RGB Damage
-# DATA_DIR        = '/home/david/code/repo/ai_docker/datasets/fpl/damage/rgb/may11'
-# MANIFEST_URL    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-component-damage-may11/manifest.txt'
-# MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-component-damage-may11/'
-# LABEL_FILTER = [0,2,4,8]
-# S3_FILTER = ['original-labels'] # must contain AT LEAST ONE of list
-
-## FPL RGB Component - April-22
-# DATA_DIR        = '/home/david/code/phawk/data/fpl/component'
-# MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-comp-1536-3008-yolov5l6-june10/'
 
 ## FPL RGB Component - july8
 DATA_DIR        = '/home/david/code/phawk/data/fpl/component'
 MODEL_DIR       = '/home/david/code/phawk/data/fpl/component/models/july8'
 MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-comp-1408-3008-yolov5l6-july8/'
-
-## FPL RGB Component - july11
-# DATA_DIR        = '/home/david/code/phawk/data/fpl/component'
-# MODEL_DIR       = '/home/david/code/phawk/data/fpl/component/models/july11'
-# MODEL_BUCKET    = 's3://ai-inference-dev-model-catalog/model/yolo-v5-full-scale/fpl-comp-1408-3008-yolov5l6-july11/'
 
 
 #-----------------------------------------------
