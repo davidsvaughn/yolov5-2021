@@ -171,10 +171,8 @@ class Detector:
 
     def run_detections(self, opt):
         image_files = FileIterator(opt.source)
-        for img_file in image_files:
+        for k,img_file in enumerate(image_files):
             p = Path(img_file)  # to Path
-            if p.name.startswith('0a0bb'):
-                print('p.name')
 
             if opt.save_dir is None:
                 print('save_dir is set to None!')
@@ -183,6 +181,7 @@ class Detector:
             detections, img0 = self.get_detections(img_file, opt)
             t2 = time_synchronized()
 
+            if k%10==0: print(k)
             if opt.skip_empty and len(detections)==0:
                 continue
 
