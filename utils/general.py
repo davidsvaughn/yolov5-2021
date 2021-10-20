@@ -538,13 +538,16 @@ def wh_iou(wh1, wh2):
     return inter / (wh1.prod(2) + wh2.prod(2) - inter)  # iou = inter / (area1 + area2 - inter)
 
 
-def non_max_suppression(prediction, conf_thres=0.01, iou_thres=0.3, classes=None, agnostic=True, multi_label=False, # conf_thres=0.1, iou_thres=0.25
+def non_max_suppression(prediction, conf_thres=0.01, iou_thres=0.3, classes=None, agnostic=True, multi_label=False, cct=None,# conf_thres=0.1, iou_thres=0.25
                         labels=(), max_det=300):
     """Runs Non-Maximum Suppression (NMS) on inference results
 
     Returns:
          list of detections, on (n,6) tensor per image [xyxy, conf, cls]
     """
+
+    if cct is not None:
+        conf_thres = cct[cct>0].min()
 
     nc = prediction.shape[2] - 5  # number of classes
     xc = prediction[..., 4] > conf_thres  # candidates
@@ -593,7 +596,11 @@ def non_max_suppression(prediction, conf_thres=0.01, iou_thres=0.3, classes=None
             x = torch.cat((box[i], x[i, j + 5, None], j[:, None].float()), 1)
         else:  # best class only
             conf, j = x[:, 5:].max(1, keepdim=True)
-            x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
+            if cct is None:
+                x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
+            else:
+                x = torch.cat((box, conf, j.float()), 1)[ conf.view(-1) > cct[j].view(-1) ]
+
 
         # Filter by class
         if classes is not None:

@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.backends.cudnn as cudnn
 from torchvision import models
 import torch.nn.functional as F
+import ast
 
 from models.experimental import attempt_load
 from utils.datasets import LoadStreams, LoadImages, letterbox
@@ -86,13 +87,17 @@ class FileIterator:
         return path
 
 class YoloModel:
-    def __init__(self, weights_path, scale, conf_thres, iou_thres, device):
+    def __init__(self, weights_path, scale, conf_thres, iou_thres, device, cct):
         self.weights_path = weights_path
         self.scale = scale
         self.conf_thres = conf_thres
         self.iou_thres = iou_thres
         self.device = device
         self.half = self.device.type != 'cpu'  # half precision only supported on CUDA
+        if cct is not None: ## class confidence thresholds
+            cct = ast.literal_eval(cct)
+            cct = None if len(cct)==0 else torch.from_numpy(np.array(cct)).to(device)
+        self.cct = cct
         self.init_model()
 
     def init_model(self):
@@ -109,15 +114,15 @@ class YoloModel:
     @torch.no_grad()
     def run(self, img, classes=None):
         pred = self.model(img)[0] # augment=opt.augment
-        pred = non_max_suppression(pred, self.conf_thres, self.iou_thres, classes)
+        pred = non_max_suppression(pred, self.conf_thres, self.iou_thres, classes, cct=self.cct)
         return pred
 
 class Detector:
-    def __init__(self, weights, img_size, conf_thres, iou_thres, device, classes=None, categories_path=None):
+    def __init__(self, weights, img_size, conf_thres, iou_thres, device, classes=None, categories_path=None, cct=None):
         self.classes = classes
         self.device = select_device(device)
         self.half = self.device.type != 'cpu'
-        self.model, self.stride, self.scale = self.init_model(weights, img_size, conf_thres, iou_thres)
+        self.model, self.stride, self.scale = self.init_model(weights, img_size, conf_thres, iou_thres, cct)
 
         # Load the categories/class-names
         if categories_path is not None:
@@ -129,8 +134,8 @@ class Detector:
         else:
             self.names = self.model.names
 
-    def init_model(self, weights, img_size, conf_thres, iou_thres):
-        model = YoloModel(weights, img_size, conf_thres, iou_thres, self.device)
+    def init_model(self, weights, img_size, conf_thres, iou_thres, cct):
+        model = YoloModel(weights, img_size, conf_thres, iou_thres, self.device, cct)
         return model, model.stride, model.scale
     
     def detect(self, img_file):
@@ -216,7 +221,7 @@ class Detector:
                         save_one_box(xyxy, imc, file=opt.save_dir / 'crops' / self.names[c] / f'{p.stem}.jpg', BGR=True)
             
             print(f'{s}Done. ({t2 - t1:.3f}s)')
-            if opt.save_img:
+            if opt.save_img and len(detections)>0:
                 cv2.imwrite(save_path, img0)
 
 
@@ -228,7 +233,9 @@ def detect(opt):
     opt.save_dir = save_dir
     opt.save_img = not opt.nosave
 
-    detector = Detector(opt.weights, opt.img_size, opt.conf_thres, opt.iou_thres, opt.device, opt.classes)
+    # img_size, conf_thres, iou_thres, device, classes=None, categories_path=None, cct=None
+    detector = Detector(opt.weights, img_size=opt.img_size, conf_thres=opt.conf_thres, iou_thres=opt.iou_thres, 
+                        device=opt.device, classes=opt.classes, cct=opt.cct)
 
     t0 = time.time()
     detector.run_detections(opt)
@@ -260,6 +267,7 @@ if __name__ == '__main__':
     parser.add_argument('--hide-labels', default=False, action='store_true', help='hide labels')
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     parser.add_argument('--skip-empty', default=False, action='store_true', help='dont print txt or img if no labels')
+    parser.add_argument('--cct', type=str, default='[]', help='class confidence thresholds')
     opt = parser.parse_args()
     if opt.classes is not None:
         opt.classes = eval(opt.classes)
