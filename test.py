@@ -201,19 +201,16 @@ def test(data,
                         f.write(('%g ' * len(line)).rstrip() % line + '\n')
 
             # W&B logging - Media Panel Plots
-            try:
-                if len(wandb_images) < log_imgs and wandb_logger.current_epoch > 0:  # Check for test operation
-                    if wandb_logger.current_epoch % wandb_logger.bbox_interval == 0:
-                        box_data = [{"position": {"minX": xyxy[0], "minY": xyxy[1], "maxX": xyxy[2], "maxY": xyxy[3]},
-                                    "class_id": int(cls),
-                                    "box_caption": "%s %.3f" % (names[int(cls)], conf),
-                                    "scores": {"class_score": conf},
-                                    "domain": "pixel"} for *xyxy, conf, cls in pred.tolist()]
-                        boxes = {"predictions": {"box_data": box_data, "class_labels": names}}  # inference-space
-                        wandb_images.append(wandb_logger.wandb.Image(img[si], boxes=boxes, caption=path.name))
-                wandb_logger.log_training_progress(predn, path, names) if wandb_logger and wandb_logger.wandb_run else None
-            except Exception as e:
-                print(f'WandB Error (Media Panel Plots): {e}')
+            if len(wandb_images) < log_imgs and wandb_logger.current_epoch > 0:  # Check for test operation
+                if wandb_logger.current_epoch % wandb_logger.bbox_interval == 0:
+                    box_data = [{"position": {"minX": xyxy[0], "minY": xyxy[1], "maxX": xyxy[2], "maxY": xyxy[3]},
+                                "class_id": int(cls),
+                                "box_caption": "%s %.3f" % (names[int(cls)], conf),
+                                "scores": {"class_score": conf},
+                                "domain": "pixel"} for *xyxy, conf, cls in pred.tolist()]
+                    boxes = {"predictions": {"box_data": box_data, "class_labels": names_dict}}  # inference-space
+                    wandb_images.append(wandb_logger.wandb.Image(img[si], boxes=boxes, caption=path.name))
+            wandb_logger.log_training_progress(predn, path, names) if wandb_logger and wandb_logger.wandb_run else None
 
             # Append to pycocotools JSON dictionary
             if save_json:
