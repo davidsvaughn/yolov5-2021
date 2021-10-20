@@ -102,6 +102,8 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
         max_by_class = True
     else:
         i0 = arg_max(f1)
+    if len(i0.shape)==0: ## if single class (0D)....
+        i0 = i0[None] ## make 1D ( i.e. 3 --> [3] )
     cc = px[i0]## class specific confidence thresholds
 
     # per-class F1 maximization...
