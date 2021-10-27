@@ -61,7 +61,10 @@ def git_describe(path=Path(__file__).parent):  # path must be a directory
 
 
 def select_device(device='', batch_size=None):
+    if isinstance(device, str) and len(device)>0:
+        return torch.device(device)
     # device = 'cpu' or '0' or '0,1,2,3'
+    device = device.replace('cuda:','')
     s = f'YOLOv5 🚀 {git_describe() or date_modified()} torch {torch.__version__} '  # string
     cpu = device.lower() == 'cpu'
     if cpu:
