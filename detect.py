@@ -17,7 +17,7 @@ import ast
 from models.experimental import attempt_load
 from utils.datasets import LoadStreams, LoadImages, letterbox
 from utils.general import check_img_size, check_requirements, check_imshow, non_max_suppression, apply_classifier, \
-    scale_coords, xyxy2xywh, xywhn2xyxy, xywh2xyxy, strip_optimizer, set_logging, increment_path, save_one_box, box_iou
+    scale_coords, xyxy2xywh, xywhn2xyxy, xywh2xyxy, strip_optimizer, set_logging, increment_path, save_one_box, box_iou, box_io1
 from utils.plots import colors, plot_one_box
 from utils.torch_utils import select_device, load_classifier, time_synchronized
 
@@ -162,7 +162,7 @@ class Detector:
         return self.detect(img_file)
 
     def format_labels(self, xywh, cls, conf, opt):
-        # if thermal or damage model, conf *may* be a tuple (conf, v), where v is extra value...
+        # if thermal hotspot model, conf *may* be a tuple (conf, v), where v is extra value...
         if isinstance(conf, tuple):
             conf = conf[0]
         txt_lab = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)
@@ -223,6 +223,111 @@ class Detector:
             if opt.save_img and len(detections)>0:
                 cv2.imwrite(save_path, img0)
 
+class ThermalDetector(Detector):
+    def __init__(self, weights, img_size, conf_thres, iou_thres, hweights, hconf_thres, hiou_thres, device, classes=None, categories_path=None, cct=None):
+        super(ThermalDetector, self).__init__(weights, img_size, conf_thres, iou_thres, device, classes, categories_path, cct)
+        ## initialize hotspot model...
+        self.hmodel, _, _ = self.init_model(hweights, img_size, hconf_thres, hiou_thres, cct)
+        ## if coming from inference stack, supply categories file with "Hotspot" already at the end
+        if categories_path is None:
+            self.names.append('Hotspot') ## add extra label for Hotspot class
+        ## initialize Adaptive Histogram Equalization (CLAHE)
+        self.clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+    
+    ## overriding base class...
+    def get_detections(self, img_file, opt=None):
+        if opt is not None:
+            return self.detect(img_file, opt.hide_normal, opt.hide_solo)
+        return self.detect(img_file)
+    
+    ## overriding base class...
+    def format_labels(self, xywh, cls, conf, opt):
+        # if thermal or damage model, conf is a tuple (conf, v), where v is extra value...
+        if not opt.hide_normal:
+            conf, hot = conf
+            txt_lab = (cls, *xywh, conf, hot) if opt.save_conf else (cls, *xywh, hot)
+        else:
+            txt_lab = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)
+        img_lab = '' if opt.hide_conf else f'{conf:.2f}'
+        return txt_lab, img_lab
+
+    ## overriding base class...
+    def detect(self, img_file, hide_normal=True, hide_solo=False):
+        ## prepare image
+        img, img0, ratio_pad = load_inference_image(img_file, scale=self.scale, stride=self.stride)
+        if img0 is None:
+            return None, None
+        
+        ## apply Adaptive Histogram Equalization (CLAHE)
+        himg = img.copy() ## hotspot model does NOT use CLAHE
+        img = img.transpose(1,2,0)
+        img = self.clahe.apply(img[:,:,0].astype(np.uint8))[:,:,None] * np.ones(3, dtype=int)[None, None, :]
+        img = img.transpose(2,0,1)
+        img0 = (self.clahe.apply(img0[:,:,0].astype(np.uint8))[:,:,None] * np.ones(3, dtype=int)[None, None, :]).astype(np.uint8)
+
+        ## run both models (thermal component and thermal hotspot)
+        pred = self.model.run(numpy2cuda(img, self.device, self.half), self.classes)
+        hpred = self.hmodel.run(numpy2cuda(himg, self.device, self.half))
+
+        ## find component-hotspot overlaps
+        det, hdet = pred[0], hpred[0]
+        dh1 = None
+        if len(det) and len(hdet):
+            boxes = det[:, :4]
+            spots = hdet[:, :4]
+            ious = box_io1(spots, boxes).cpu().numpy()
+            mask = (ious >= self.hmodel.iou_thres).astype(np.int32)
+            ious = ious * mask
+
+            # find best match for each hotspot
+            col_idx = np.argmax(ious, 1)
+            row_idx = np.arange(len(col_idx))
+            mask = mask*0
+            mask[row_idx, col_idx] = np.ones(len(col_idx))
+            ious = ious * mask
+
+            dh1 = (ious.sum(0)>0).astype(np.int32)  # components that do overlap with a hotspot
+            hd0 = (ious.sum(1)==0) # hotspots that don't overlap with a component
+        elif len(hdet):
+            hd0 = np.ones(len(hdet))>0
+        elif len(det):
+            dh1 = np.zeros(len(det))
+    
+        # select only components that match with a hotspot
+        if hide_normal:
+            idx = dh1>0
+            det, dh1 = det[idx], dh1[idx]
+
+        ## process components
+        detections = []
+        gn = torch.tensor(img0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
+        if len(det):
+            # Rescale boxes from img_size to im0 size
+            det[:, :4] = scale_coords(img.shape[1:], det[:, :4], img0.shape, ratio_pad).round()
+            # loop thru detections
+            n = len(det)
+            for i, (*xyxy, conf, cls) in enumerate(reversed(det)):
+                xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                if not hide_normal:
+                    hot = dh1[n-i-1] if (dh1 is not None) else 0
+                    conf = (conf, hot) # hot is a binary indicator for component having a hotspot
+                detections.append((xywh, xyxy, conf, cls))
+        
+        ## process all hotspots
+        if len(hdet):
+            hdet[:, :4] = scale_coords(img.shape[1:], hdet[:, :4], img0.shape, ratio_pad).round()
+            n = len(hdet)
+            cls = torch.Tensor([len(self.names)-1]) ## cls for Hotspot
+            for i, (*xyxy, conf, _) in enumerate(reversed(hdet)):
+                no_overlap = hd0[n-i-1] ## hotspot does NOT overlap with any component
+                if no_overlap and hide_solo:
+                    continue
+                xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                if not hide_normal:
+                    conf = (conf, 1 if no_overlap else 0) # binary hotspot indicator always 1 for solo hotspot
+                detections.append((xywh, xyxy, conf, cls))
+
+        return detections, img0
 
 @torch.no_grad()
 def detect(opt):
@@ -232,9 +337,13 @@ def detect(opt):
     opt.save_dir = save_dir
     opt.save_img = not opt.nosave
 
-    # img_size, conf_thres, iou_thres, device, classes=None, categories_path=None, cct=None
-    detector = Detector(opt.weights, img_size=opt.img_size, conf_thres=opt.conf_thres, iou_thres=opt.iou_thres, 
-                        device=opt.device, classes=opt.classes, cct=opt.cct)
+    if opt.hotspot:
+        detector = ThermalDetector(opt.weights, img_size=opt.img_size, conf_thres=opt.conf_thres, iou_thres=opt.iou_thres, 
+                                    hweights=opt.hotspot, hconf_thres=opt.hconf_thres, hiou_thres=opt.hiou_thres,
+                                    device=opt.device, classes=opt.classes, categories_path=opt.categories, cct=opt.cct)
+    else:
+        detector = Detector(opt.weights, img_size=opt.img_size, conf_thres=opt.conf_thres, iou_thres=opt.iou_thres, 
+                            device=opt.device, classes=opt.classes, categories_path=opt.categories, cct=opt.cct)
 
     t0 = time.time()
     detector.run_detections(opt)
@@ -244,6 +353,7 @@ def detect(opt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', type=str, help='component model weights')
+    parser.add_argument('--categories', type=str, help='component model classes')
     parser.add_argument('--source', type=str, default='data/images', help='source')  # file/folder, 0 for webcam
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.25, help='component confidence threshold')
@@ -267,6 +377,11 @@ if __name__ == '__main__':
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     parser.add_argument('--skip-empty', default=False, action='store_true', help='dont print txt or img if no labels')
     parser.add_argument('--cct', type=str, default='[]', help='class confidence thresholds')
+    parser.add_argument('--hotspot', default='', type=str, help='hotspot model weights')
+    parser.add_argument('--hconf-thres', type=float, default=0.1, help='hotspot confidence threshold')
+    parser.add_argument('--hiou-thres', type=float, default=0.2, help='IOU threshold for hotspot-component overlap')
+    parser.add_argument('--hide-normal', default=False, action='store_true', help='hide normal components, if hotspot')
+    parser.add_argument('--hide-solo', default=False, action='store_true', help='hide solo/unmatched hotspots')
     opt = parser.parse_args()
     if opt.classes is not None:
         opt.classes = eval(opt.classes)
