@@ -224,12 +224,13 @@ class Detector:
                 cv2.imwrite(save_path, img0)
 
 class ThermalDetector(Detector):
-    def __init__(self, weights, img_size, conf_thres, iou_thres, hweights, hconf_thres, hiou_thres, device, classes=None, categories_path=None, cct=None):
+    def __init__(self, weights, img_size, conf_thres, iou_thres, hweights, hconf_thres=0.5, hiou_thres=0.2, device=None, classes=None, categories_path=None, cct=None, PA_mode=False):
         super(ThermalDetector, self).__init__(weights, img_size, conf_thres, iou_thres, device, classes, categories_path, cct)
+        self.PA_mode = PA_mode
         ## initialize hotspot model...
-        self.hmodel, _, _ = self.init_model(hweights, img_size, hconf_thres, hiou_thres, cct)
+        self.hmodel, _, _ = self.init_model(hweights, img_size, hconf_thres, hiou_thres, cct=None)
         ## if coming from inference stack, supply categories file with "Hotspot" already at the end
-        if categories_path is None:
+        if not PA_mode:
             self.names.append('Hotspot') ## add extra label for Hotspot class
         ## initialize Adaptive Histogram Equalization (CLAHE)
         self.clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
@@ -252,7 +253,7 @@ class ThermalDetector(Detector):
         return txt_lab, img_lab
 
     ## overriding base class...
-    def detect(self, img_file, hide_normal=True, hide_solo=False):
+    def detect(self, img_file, hide_normal=True, hide_solo=True):
         ## prepare image
         img, img0, ratio_pad = load_inference_image(img_file, scale=self.scale, stride=self.stride)
         if img0 is None:
@@ -295,8 +296,11 @@ class ThermalDetector(Detector):
     
         # select only components that match with a hotspot
         if hide_normal:
-            idx = dh1>0
-            det, dh1 = det[idx], dh1[idx]
+            try:
+                idx = dh1>0
+                det, dh1 = det[idx], dh1[idx]
+            except:
+                pass
 
         ## process components
         detections = []
@@ -313,8 +317,8 @@ class ThermalDetector(Detector):
                     conf = (conf, hot) # hot is a binary indicator for component having a hotspot
                 detections.append((xywh, xyxy, conf, cls))
         
-        ## process all hotspots
-        if len(hdet):
+        ## process all hotspots and (maybe) add to detections
+        if len(hdet) and not self.PA_mode:
             hdet[:, :4] = scale_coords(img.shape[1:], hdet[:, :4], img0.shape, ratio_pad).round()
             n = len(hdet)
             cls = torch.Tensor([len(self.names)-1]) ## cls for Hotspot
@@ -378,7 +382,7 @@ if __name__ == '__main__':
     parser.add_argument('--skip-empty', default=False, action='store_true', help='dont print txt or img if no labels')
     parser.add_argument('--cct', type=str, default='[]', help='class confidence thresholds')
     parser.add_argument('--hotspot', default='', type=str, help='hotspot model weights')
-    parser.add_argument('--hconf-thres', type=float, default=0.1, help='hotspot confidence threshold')
+    parser.add_argument('--hconf-thres', type=float, default=0.5, help='hotspot confidence threshold')
     parser.add_argument('--hiou-thres', type=float, default=0.2, help='IOU threshold for hotspot-component overlap')
     parser.add_argument('--hide-normal', default=False, action='store_true', help='hide normal components, if hotspot')
     parser.add_argument('--hide-solo', default=False, action='store_true', help='hide solo/unmatched hotspots')
