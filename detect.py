@@ -122,6 +122,8 @@ class Detector:
         self.classes = classes
         self.device = select_device(device)
         self.half = self.device.type != 'cpu'
+        # if cct is None and hasattr(conf_thres, '__iter__'):
+        #     cct = conf_thres
         self.model, self.stride, self.scale = self.init_model(weights, img_size, conf_thres, iou_thres, cct)
 
         # Load the categories/class-names
