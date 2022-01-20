@@ -287,7 +287,7 @@ def test(data,
             thread2.start()
             thread2.join()
             ##################################
-            # display fn and fp boxes only
+            ## show FP and FN detections...
             if log_errors>-1 and batch_size==1:
                 ## fn boxes...
                 if fn>0:

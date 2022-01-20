@@ -193,7 +193,9 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         images *= 255
 
     tl = 3  # line thickness
+    tl = round(0.002 * (images.shape[2] + images.shape[3]) / 6) + 1  # line/font thickness
     tf = max(tl - 1, 1)  # font thickness
+
     bs, _, h, w = images.shape  # batch size, _, height, width
     bs = min(bs, max_subplots)  # limit plot images
     ns = np.ceil(bs ** 0.5)  # number of subplots (square)
@@ -244,9 +246,9 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
                     first[cls_id]=0
                 else:
                     label = False
-                if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                if labels or conf[j] > 0.05:  ## was 0.25  ## minimum confidence threshold
                     label = (None if labels else '%.1f' % (conf[j])) if not label else '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
-                    plot_one_box(box, mosaic, label=label, color=color, line_thickness=1)#tl
+                    plot_one_box(box, mosaic, label=label, color=color, line_thickness=None)#tl
                     if only_labeled:
                         sv = True
 
@@ -261,7 +263,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         cv2.rectangle(mosaic, (block_x, block_y), (block_x + w, block_y + h), (255, 255, 255), thickness=3)
 
     if fname:
-        ## another resize???  wtf???
+        ## another resize???  wtf??? //dsv
         # r = min(1280. / max(h, w) / ns, 1.0)  # ratio to limit image size
         # mosaic = cv2.resize(mosaic, (int(ns * w * r), int(ns * h * r)), interpolation=cv2.INTER_AREA)
 

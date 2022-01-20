@@ -87,7 +87,7 @@ class FileIterator:
         return path
 
 class YoloModel:
-    def __init__(self, weights_path, scale, conf_thres, iou_thres, device, cct):
+    def __init__(self, weights_path, scale, conf_thres, iou_thres, device, cct, opt=None):
         self.weights_path = weights_path
         self.scale = scale
         self.conf_thres = conf_thres
@@ -98,6 +98,7 @@ class YoloModel:
             cct = ast.literal_eval(cct)
             cct = None if len(cct)==0 else torch.from_numpy(np.array(cct)).to(device)
         self.cct = cct
+        self.opt = opt
         self.init_model()
 
     def init_model(self):
@@ -113,20 +114,32 @@ class YoloModel:
 
     @torch.no_grad()
     def run(self, img, classes=None):
-        pred = self.model(img)[0] # augment=opt.augment
-        pred = non_max_suppression(pred, self.conf_thres, self.iou_thres, classes, cct=self.cct)
+        preds = self.model(img)[0] # augment=opt.augment
+
+        if self.opt.sem_classes is None: ## default --> normal one-shot NMS
+            pred = non_max_suppression(preds, self.conf_thres, self.iou_thres, classes, cct=self.cct)
+        else: ## split NMS between normal object classes and semantic classes (roads, fences, rivers, etc...)
+            nc = preds.shape[2] - 5  ## get total number of classes
+            obj_classes = list(set(np.arange(nc)) - set(self.opt.sem_classes)) ## list normal object classes
+            ## get normal object predictions
+            pred_obj = non_max_suppression(preds, self.conf_thres, self.iou_thres, classes=obj_classes, cct=self.cct)
+            ## get semantic class predictions
+            pred_sem = non_max_suppression(preds, self.opt.sem_conf_thres, self.opt.sem_iou_thres, classes=self.opt.sem_classes, cct=self.cct)
+            ## recombine predictions
+            pred = torch.cat((pred_obj[0], pred_sem[0]), 0)
+            pred = [pred]
+
         return pred
 
 class Detector:
-    def __init__(self, weights, img_size, conf_thres, iou_thres, device, classes=None, categories_path=None, cct=None):
-        self.classes = classes
-        self.device = select_device(device)
+    def __init__(self, opt):
+        self.classes = opt.classes
+        self.device = select_device(opt.device)
         self.half = self.device.type != 'cpu'
-        # if cct is None and hasattr(conf_thres, '__iter__'):
-        #     cct = conf_thres
-        self.model, self.stride, self.scale = self.init_model(weights, img_size, conf_thres, iou_thres, cct)
+        self.model, self.stride, self.scale = self.init_model(opt.weights, opt.img_size, opt.conf_thres, opt.iou_thres, opt.cct, opt)
 
         # Load the categories/class-names
+        categories_path = opt.categories
         if categories_path is not None:
             with open(categories_path) as categories_file:
                 categories_json = json.load(categories_file)['categories']
@@ -136,8 +149,8 @@ class Detector:
         else:
             self.names = self.model.names
 
-    def init_model(self, weights, img_size, conf_thres, iou_thres, cct):
-        model = YoloModel(weights, img_size, conf_thres, iou_thres, self.device, cct)
+    def init_model(self, weights, img_size, conf_thres, iou_thres, cct, opt):
+        model = YoloModel(weights, img_size, conf_thres, iou_thres, self.device, cct, opt)
         return model, model.stride, model.scale
     
     def detect(self, img_file):
@@ -226,11 +239,11 @@ class Detector:
                 cv2.imwrite(save_path, img0)
 
 class ThermalDetector(Detector):
-    def __init__(self, weights, img_size, conf_thres, iou_thres, hweights, hconf_thres=0.5, hiou_thres=0.2, device=None, classes=None, categories_path=None, cct=None, PA_mode=False):
-        super(ThermalDetector, self).__init__(weights, img_size, conf_thres, iou_thres, device, classes, categories_path, cct)
+    def __init__(self, opt, PA_mode=False):
+        super(ThermalDetector, self).__init__(opt)
         self.PA_mode = PA_mode
         ## initialize hotspot model...
-        self.hmodel, _, _ = self.init_model(hweights, img_size, hconf_thres, hiou_thres, cct=None)
+        self.hmodel, _, _ = self.init_model(opt.hweights, opt.img_size, opt.hconf_thres, opt.hiou_thres, cct=None)
         ## if coming from inference stack, supply categories file with "Hotspot" already at the end
         if not PA_mode:
             self.names.append('Hotspot') ## add extra label for Hotspot class
@@ -344,12 +357,14 @@ def detect(opt):
     opt.save_img = not opt.nosave
 
     if opt.hotspot:
-        detector = ThermalDetector(opt.weights, img_size=opt.img_size, conf_thres=opt.conf_thres, iou_thres=opt.iou_thres, 
-                                    hweights=opt.hotspot, hconf_thres=opt.hconf_thres, hiou_thres=opt.hiou_thres,
-                                    device=opt.device, classes=opt.classes, categories_path=opt.categories, cct=opt.cct)
+        detector = ThermalDetector(opt)
+        # detector = ThermalDetector(opt.weights, img_size=opt.img_size, conf_thres=opt.conf_thres, iou_thres=opt.iou_thres, 
+        #                             hweights=opt.hotspot, hconf_thres=opt.hconf_thres, hiou_thres=opt.hiou_thres,
+        #                             device=opt.device, classes=opt.classes, categories_path=opt.categories, cct=opt.cct)
     else:
-        detector = Detector(opt.weights, img_size=opt.img_size, conf_thres=opt.conf_thres, iou_thres=opt.iou_thres, 
-                            device=opt.device, classes=opt.classes, categories_path=opt.categories, cct=opt.cct)
+        detector = Detector(opt)
+        # detector = Detector(opt.weights, img_size=opt.img_size, conf_thres=opt.conf_thres, iou_thres=opt.iou_thres, 
+        #                     device=opt.device, classes=opt.classes, categories_path=opt.categories, cct=opt.cct)
 
     t0 = time.time()
     detector.run_detections(opt)
@@ -388,9 +403,16 @@ if __name__ == '__main__':
     parser.add_argument('--hiou-thres', type=float, default=0.2, help='IOU threshold for hotspot-component overlap')
     parser.add_argument('--hide-normal', default=False, action='store_true', help='hide normal components, if hotspot')
     parser.add_argument('--hide-solo', default=False, action='store_true', help='hide solo/unmatched hotspots')
+
+    parser.add_argument('--sem-classes', type=str, default=None, help='list semantic classes: --sem-class [0], or --sem-class [0, 2, 3]')
+    parser.add_argument('--sem-iou-thres', type=float, default=0.1, help='sematic class IOU threshold for NMS')
+    parser.add_argument('--sem-conf-thres', type=float, default=0.1, help='semantic class confidence threshold')
+
     opt = parser.parse_args()
     if opt.classes is not None:
         opt.classes = eval(opt.classes)
+    if opt.sem_classes is not None:
+        opt.sem_classes = eval(opt.sem_classes)
     print(opt)
     # check_requirements(exclude=('tensorboard', 'pycocotools', 'thop'))
 

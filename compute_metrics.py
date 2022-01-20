@@ -62,17 +62,21 @@ iou_thres = 0.25
 max_by_class = False
 
 ## Rich 70
+# class_file = '/home/product/dvaughn/data/fpl/component/rich/yolov5_testing/classes.txt'
 # pred_dir = '/home/product/dvaughn/data/fpl/component/rich/yolov5_testing/rich_metrics/pred'
 # lab_dir = '/home/product/dvaughn/data/fpl/component/rich/yolov5_testing/rich_metrics/truth'
-
 ## RGB 604
-pred_dir = '/home/product/dvaughn/data/fpl/component/models/latest/detect/run_3008/labels'
-lab_dir = '/home/product/dvaughn/data/fpl/component/labels'
+# pred_dir = '/home/product/dvaughn/data/fpl/component/models/latest/detect/run_3008/labels'
+# lab_dir = '/home/product/dvaughn/data/fpl/component/labels'
+
+## RGB
+class_file = '/home/david/code/phawk/data/solar/indivillage/classes.txt'
+pred_dir = '/home/david/code/phawk/data/solar/indivillage/models/model1/detect/exp/labels'
+lab_dir = '/home/david/code/phawk/data/solar/indivillage/labels'
 
 pred_files = get_filenames(pred_dir, txt)
 # shuf(pred_files)
 
-class_file = '/home/product/dvaughn/data/fpl/component/rich/yolov5_testing/classes.txt'
 names = read_lines(class_file)
 nc = len(names)
 iouv = np.arange(iou_thres, 1, 0.05)
@@ -81,9 +85,7 @@ niou = len(iouv)
 ni = np.zeros(nc)
 stats = []
 for fn in pred_files:
-    # fn = 'RaptorGuard_PRIMAVISTA_405533_RGB_54.txt'
-    # print(fn)
-    #####################
+
     lf = f'{lab_dir}/{fn}'
     pf = f'{pred_dir}/{fn}'
     labels = load_labels(lf)
@@ -144,6 +146,8 @@ print(f'\n{s}')
 print(pf % ('all', len(pred_files), nt.sum(), mp, mr, mf1, map50, map))
 for i, c in enumerate(ap_class):
     print(pf % (names[c], ni[c], nt[c], p[i], r[i], f1[i], ap50[i], ap[i]))
+print('')
+print(pf % ('Mean', len(pred_files), nt.sum(), p.mean(), r.mean(), f1.mean(), ap50.mean(), ap.mean()))
 if conf_best>-1:
     print('\nOptimal Confidence Threshold: {0:0.3f}'.format(conf_best))
     if max_by_class:
