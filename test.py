@@ -48,7 +48,7 @@ def test(data,
          max_by_class=True,
          opt=None):
     
-    print_size, print_batches = 0, 3
+    print_size, print_batches = 640, 3
     log_errors = -1
     if opt is not None:
         print_size = opt.print_size
