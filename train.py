@@ -20,9 +20,11 @@ import yaml
 from torch.cuda import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
-from tqdm import tqdm
 import boto3
 import gc
+
+# from tqdm import tqdm
+from tqdm.auto import tqdm
 
 import test  # import test.py to get mAP after each epoch
 from models.experimental import attempt_load
@@ -148,7 +150,7 @@ def train(hyp, opt, device, tb_writer=None):
     for k, v in model.named_parameters():
         v.requires_grad = True  # train all layers
         if any(x in k for x in freeze):
-            print('freezing %s' % k)
+            logger.info('freezing %s' % k)
             v.requires_grad = False
 
     # Optimizer
@@ -301,7 +303,7 @@ def train(hyp, opt, device, tb_writer=None):
     ###### resuming training run..... #########################################
     if init_epochs>0:
         nw = -1
-        print('Stepping lr_scheduler forward {} epochs...'.format(init_epochs))
+        logger.info('Stepping lr_scheduler forward {} epochs...'.format(init_epochs))
     for i in range(init_epochs-1):
         scheduler.step()
     if init_epochs>0 and rank in [-1, 0]:  # check initial model performance....
@@ -347,10 +349,13 @@ def train(hyp, opt, device, tb_writer=None):
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
         pbar = enumerate(dataloader)
-        # logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'labels', 'img_size'))
+        
+        logger.info('--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------')
         logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'targets', 'imgs_sec'))
-        if rank in [-1, 0]:
-            pbar = tqdm(pbar, total=nb)  # progress bar
+        # print(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'targets', 'imgs_sec'))
+
+        # if rank in [-1, 0]: pbar = tqdm(pbar, total=nb)#, position=0, leave=True)  # progress bar
+
         optimizer.zero_grad()
         num_img = 0
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
@@ -407,7 +412,7 @@ def train(hyp, opt, device, tb_writer=None):
                     '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0],
                     imgs_sec ## #images/sec
                 )
-                pbar.set_description(s)
+                # pbar.set_description(s)
 
                 # Plot
                 if plots and ni < 3:
@@ -421,15 +426,19 @@ def train(hyp, opt, device, tb_writer=None):
                                                   save_dir.glob('train*.jpg') if x.exists()]})
 
             # end batch ------------------------------------------------------------------------------------------------
+
+        # end epoch ----------------------------------------------------------------------------------------------------
+
         if rank in [-1, 0]:
+            logger.info(s)
             logger.info('\tepoch completed in %.2f min.\n' % ((time.time() - t1) / 60))
             t1 = time.time()
+
         if (epoch+1)%10==0:
             gc.collect()
             torch.cuda.empty_cache()
             if rank in [-1, 0]:
                 logger.info('\tempty cuda cache took %.2f sec.\n' % ((time.time() - t1)))
-        # end epoch ----------------------------------------------------------------------------------------------------
 
         # Scheduler
         lr = [x['lr'] for x in optimizer.param_groups]  # for tensorboard
@@ -508,7 +517,7 @@ def train(hyp, opt, device, tb_writer=None):
                         new_best_model = False
 
             except Exception as e:
-                print('validation run failed:'+ str(e))
+                # print('validation run failed:'+ str(e))
                 logger.error('validation run failed:'+ str(e))
 
         # end epoch ----------------------------------------------------------------------------------------------------
@@ -736,5 +745,5 @@ if __name__ == '__main__':
 
         # Plot results
         plot_evolution(yaml_file)
-        print(f'Hyperparameter evolution complete. Best results saved as: {yaml_file}\n'
+        logger.info(f'Hyperparameter evolution complete. Best results saved as: {yaml_file}\n'
               f'Command to train a new model with these hyperparameters: $ python train.py --hyp {yaml_file}')
