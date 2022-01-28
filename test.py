@@ -18,6 +18,12 @@ from utils.plots import plot_images, output_to_target, plot_study_txt
 from utils.torch_utils import select_device, time_synchronized
 import ast
 
+import logging
+logger = logging.getLogger(__name__)
+
+# pfunc = logger.info
+pfunc = print
+
 def save_list(lst, fn):
     with open(fn, 'w') as f:
         for item in lst:
@@ -119,14 +125,18 @@ def test(data,
     names = data['names']#names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
     names_dict = {k: v for k, v in enumerate(names)}
     coco91class = coco80_to_coco91_class()
-    # s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
+
     fmt = '%{}s'.format(2+max([len(s) for s in names]))
     s = (fmt + '%12s' * 7) % ('Class', 'Images', 'Targets', 'P', 'R', 'F1', 'mAP@.5', 'mAP@.5:.95')
     p, r, f1, mp, mr, map50, map, t0, t1, mf1 = 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.
+    ##
+    # dataloader = tqdm(dataloader, desc=s)
+    ##
+
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
     error_log = []
-    for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
+    for batch_i, (img, targets, paths, shapes) in enumerate(dataloader):
         img = img.to(device, non_blocking=True)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -317,17 +327,26 @@ def test(data,
         nt = torch.zeros(1)
 
     # Print results
+    pfunc('------------------------------------------- Validation Set -----------------------------------------------')
+    pfunc(s)
     pf = fmt + '%12.3g' * 7  # print format
-    print(pf % ('all', seen, nt.sum(), mp, mr, mf1, map50, map))
 
     # Print results per class
     if (verbose or nc < 50) and nc > 1 and len(stats):
         for i, c in enumerate(ap_class):
-            print(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i]))
+            pfunc(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i])) #log
+    
+    ## Print averages
+    if nc>1:
+        pfunc('')
+        pfunc(pf % ('AVG', seen, nt.sum(), p.mean(), r.mean(), f1.mean(), ap50.mean(), ap.mean())) ## unweighted average
+    ss = 'WEIGHTED AVG' if nc>1 else names[0]
+    pfunc(pf % (ss, seen, nt.sum(), mp, mr, mf1, map50, map)) ## weighted average (if nc>1)
+
     if conf_best>-1:
-        print('\nOptimal Confidence Threshold: {0:0.3f}'.format(conf_best))
+        pfunc('\nOptimal Confidence Threshold: {0:0.3f}'.format(conf_best)) #log
         if max_by_class:
-            print('Optimal Confidence Thresholds (Per-Class): {}'.format(list(cc.round(3))))
+            pfunc('Optimal Confidence Thresholds (Per-Class): {}'.format(list(cc.round(3)))) #log
 
     # Print speeds
     t = tuple(x / seen * 1E3 for x in (t0, t1, t0 + t1)) + (imgsz, imgsz, batch_size)  # tuple

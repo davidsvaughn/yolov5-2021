@@ -44,6 +44,9 @@ logger = logging.getLogger(__name__)
 s3_client    = None
 first_upload = True
 
+# pfunc = logger.info
+pfunc = print
+
 def upload_model(opt):
     global s3_client, first_upload
 
@@ -320,7 +323,7 @@ def train(hyp, opt, device, tb_writer=None):
                 compute_loss=compute_loss)
     ###########################################################################
 
-    logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
+    pfunc(f'Image sizes {imgsz} train, {imgsz_test} test\n'
                 f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
@@ -350,17 +353,30 @@ def train(hyp, opt, device, tb_writer=None):
             dataloader.sampler.set_epoch(epoch)
         pbar = enumerate(dataloader)
         
-        logger.info('--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------')
-        logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'targets', 'imgs_sec'))
-        # print(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'targets', 'imgs_sec'))
+        if rank in [-1, 0]:
+            steps = list(range(100,0,-2))
+            pfunc('==========================================================================================================')
+            pfunc(f'Epoch {epoch+1}/{epochs}')
+            # pfunc(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'targets', 'imgs_sec'))
 
-        # if rank in [-1, 0]: pbar = tqdm(pbar, total=nb)#, position=0, leave=True)  # progress bar
+        # if rank in [-1, 0]:
+        #     pbar = tqdm(pbar, total=nb)#, position=0, leave=True)  # progress bar
 
         optimizer.zero_grad()
         num_img = 0
+        
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
+
+            ## simple progress indicator....
+            if rank in [-1, 0]:
+                prog = int(np.ceil(100*(i+1)/nb))
+                while len(steps)>0 and prog>=steps[-1]:
+                    step = steps.pop()
+                    pfunc('.', end='')
+                    if step%10==0:
+                        pfunc(f'{step}%', end='')
 
             # Warmup
             if ni <= nw:
@@ -408,10 +424,10 @@ def train(hyp, opt, device, tb_writer=None):
                 imgs_sec = (num_img/td) * opt.world_size
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                s = ('%10s' * 2 + '%10.4g' * 6) % (
-                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0],
-                    imgs_sec ## #images/sec
-                )
+                # s = ('%10s' * 2 + '%10.4g' * 6) % (
+                #     '%g/%g' % (epoch+1, epochs), mem, *mloss, targets.shape[0],
+                #     imgs_sec ## #images/sec
+                # )
                 # pbar.set_description(s)
 
                 # Plot
@@ -430,15 +446,17 @@ def train(hyp, opt, device, tb_writer=None):
         # end epoch ----------------------------------------------------------------------------------------------------
 
         if rank in [-1, 0]:
-            logger.info(s)
-            logger.info('\tepoch completed in %.2f min.\n' % ((time.time() - t1) / 60))
+            # pfunc(('\n' + '%10s' * 8) % ('total_min', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'targets', 'imgs_sec'))
+            # pfunc(('%10.2f' + '%10s' + '%10.4g' * 6) % ( ((time.time()-t1)/60), mem, *mloss, targets.shape[0], imgs_sec))
+            pfunc(('\n' + '%10s' * 3) % ('total_min', 'gpu_mem', 'imgs_sec'))
+            pfunc(('%10.2f' + '%10s' + '%10.4g') % ( ((time.time()-t1)/60), mem, imgs_sec))
             t1 = time.time()
 
         if (epoch+1)%10==0:
             gc.collect()
             torch.cuda.empty_cache()
             if rank in [-1, 0]:
-                logger.info('\tempty cuda cache took %.2f sec.\n' % ((time.time() - t1)))
+                pfunc('\tempty cuda cache took %.2f sec.\n' % ((time.time() - t1)))
 
         # Scheduler
         lr = [x['lr'] for x in optimizer.param_groups]  # for tensorboard
@@ -467,7 +485,7 @@ def train(hyp, opt, device, tb_writer=None):
 
                 # Write
                 with open(results_file, 'a') as f:
-                    f.write(s + '%10.4g' * 8 % results + '\n')  # append metrics, val_loss
+                    f.write('%10.4g' * 8 % results + '\n')  # append metrics, val_loss
 
                 # Log
                 tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
@@ -500,7 +518,7 @@ def train(hyp, opt, device, tb_writer=None):
                     # Save last, best and delete
                     torch.save(ckpt, last)
                     if best_fitness == fi:
-                        logger.info('Saving best model!')
+                        pfunc('Saving best model!')
                         torch.save(ckpt, best)
                         new_best_model = True
                     if wandb_logger.wandb:
@@ -531,7 +549,7 @@ def train(hyp, opt, device, tb_writer=None):
                 wandb_logger.log({"Results": [wandb_logger.wandb.Image(str(save_dir / f), caption=f) for f in files
                                               if (save_dir / f).exists()]})
         # Test best.pt
-        logger.info('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
+        pfunc('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
         if opt.data.endswith('coco.yaml') and nc == 80:  # if COCO
             for m in [last, best] if best.exists() else [last]:  # speed, mAP tests
                 results, _, _ = test.test(opt.data,
