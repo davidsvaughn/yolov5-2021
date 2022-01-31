@@ -44,8 +44,8 @@ logger = logging.getLogger(__name__)
 s3_client    = None
 first_upload = True
 
-# pfunc = logger.info
-pfunc = print
+pfunc = logger.info
+# pfunc = print
 
 def upload_model(opt):
     global s3_client, first_upload
@@ -374,9 +374,9 @@ def train(hyp, opt, device, tb_writer=None):
                 prog = int(np.ceil(100*(i+1)/nb))
                 while len(steps)>0 and prog>=steps[-1]:
                     step = steps.pop()
-                    pfunc('.', end='')
+                    print('.', end='')
                     if step%10==0:
-                        pfunc(f'{step}%', end='')
+                        print(f'{step}%', end='')
 
             # Warmup
             if ni <= nw:
