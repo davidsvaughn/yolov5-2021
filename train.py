@@ -23,8 +23,8 @@ from torch.utils.tensorboard import SummaryWriter
 import boto3
 import gc
 
-# from tqdm import tqdm
-from tqdm.auto import tqdm
+from tqdm import tqdm
+# from tqdm.auto import tqdm
 
 import test  # import test.py to get mAP after each epoch
 from models.experimental import attempt_load
@@ -40,12 +40,18 @@ from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, de_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
+# handler = logging.StreamHandler()
+# handler.terminator = ""
+# logging.StreamHandler.terminator = ""
 logger = logging.getLogger(__name__)
+
 s3_client    = None
 first_upload = True
 
 pfunc = logger.info
 # pfunc = print
+
+TQDM = False
 
 def upload_model(opt):
     global s3_client, first_upload
@@ -357,26 +363,27 @@ def train(hyp, opt, device, tb_writer=None):
             steps = list(range(100,0,-2))
             pfunc('==========================================================================================================')
             pfunc(f'Epoch {epoch+1}/{epochs}')
-            # pfunc(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'targets', 'imgs_sec'))
-
-        # if rank in [-1, 0]:
-        #     pbar = tqdm(pbar, total=nb)#, position=0, leave=True)  # progress bar
+            if TQDM:
+                # pfunc(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'targets', 'imgs_sec'))
+                pbar = tqdm(pbar, total=nb)#, position=0, leave=True)  # progress bar
 
         optimizer.zero_grad()
         num_img = 0
         
+        # logging.StreamHandler.terminator = ""
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
 
             ## simple progress indicator....
-            if rank in [-1, 0]:
-                prog = int(np.ceil(100*(i+1)/nb))
-                while len(steps)>0 and prog>=steps[-1]:
-                    step = steps.pop()
-                    print('.', end='')
-                    if step%10==0:
-                        print(f'{step}%', end='')
+            if not TQDM:
+                if rank in [-1, 0]:
+                    prog = int(np.ceil(100*(i+1)/nb))
+                    while len(steps)>0 and prog>=steps[-1]:
+                        step = steps.pop()
+                        # pfunc('.')
+                        if step%10==0:
+                            pfunc(f'{step}%')
 
             # Warmup
             if ni <= nw:
@@ -424,11 +431,12 @@ def train(hyp, opt, device, tb_writer=None):
                 imgs_sec = (num_img/td) * opt.world_size
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                # s = ('%10s' * 2 + '%10.4g' * 6) % (
-                #     '%g/%g' % (epoch+1, epochs), mem, *mloss, targets.shape[0],
-                #     imgs_sec ## #images/sec
-                # )
-                # pbar.set_description(s)
+                if TQDM:
+                    s = ('%10s' * 2 + '%10.4g' * 6) % (
+                        '%g/%g' % (epoch+1, epochs), mem, *mloss, targets.shape[0],
+                        imgs_sec ## #images/sec
+                    )
+                    pbar.set_description(s)
 
                 # Plot
                 if plots and ni < 3:
@@ -445,6 +453,7 @@ def train(hyp, opt, device, tb_writer=None):
 
         # end epoch ----------------------------------------------------------------------------------------------------
 
+        # logging.StreamHandler.terminator = "\n"
         if rank in [-1, 0]:
             # pfunc(('\n' + '%10s' * 8) % ('total_min', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'targets', 'imgs_sec'))
             # pfunc(('%10.2f' + '%10s' + '%10.4g' * 6) % ( ((time.time()-t1)/60), mem, *mloss, targets.shape[0], imgs_sec))
@@ -452,11 +461,11 @@ def train(hyp, opt, device, tb_writer=None):
             pfunc(('%10.2f' + '%10s' + '%10.4g') % ( ((time.time()-t1)/60), mem, imgs_sec))
             t1 = time.time()
 
-        if (epoch+1)%10==0:
-            gc.collect()
-            torch.cuda.empty_cache()
-            if rank in [-1, 0]:
-                pfunc('\tempty cuda cache took %.2f sec.\n' % ((time.time() - t1)))
+        # if (epoch+1)%10==0:
+        #     gc.collect()
+        #     torch.cuda.empty_cache()
+        #     if rank in [-1, 0]:
+        #         pfunc('\tempty cuda cache took %.2f sec.\n' % ((time.time() - t1)))
 
         # Scheduler
         lr = [x['lr'] for x in optimizer.param_groups]  # for tensorboard
