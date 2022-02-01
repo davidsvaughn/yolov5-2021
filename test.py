@@ -21,8 +21,8 @@ import ast
 import logging
 logger = logging.getLogger(__name__)
 
-# pfunc = logger.info
-pfunc = print
+pfunc = logger.info
+# pfunc = print
 
 def save_list(lst, fn):
     with open(fn, 'w') as f:
