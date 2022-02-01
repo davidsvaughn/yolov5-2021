@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image, ExifTags
 from torch.utils.data import Dataset
-# from tqdm import tqdm
+from tqdm import tqdm
 
 from utils.general import check_requirements, xyxy2xywh, xywh2xyxy, xywhn2xyxy, xyxy2xywhn, xyn2xy, segment2box, segments2boxes, \
     resample_segments, clean_str
@@ -408,7 +408,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         nf, nm, ne, nc, n = cache.pop('results')  # found, missing, empty, corrupted, total
         if exists:
             d = f"Scanning '{cache_path}' images and labels... {nf} found, {nm} missing, {ne} empty, {nc} corrupted"
-            # tqdm(None, desc=prefix + d, total=n, initial=n)  # display cache results
+            tqdm(None, desc=prefix + d, total=n, initial=n)  # display cache results
         assert nf > 0 or not augment, f'{prefix}No labels in {cache_path}. Can not train without labels. See {help_url}'
 
         # Read cache
@@ -462,19 +462,19 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             results = ThreadPool(8).imap(lambda x: load_image(*x), zip(repeat(self), range(n)))  # 8 threads
             # results = map(lambda x: load_image(*x), zip(repeat(self), range(n)))
             pbar = enumerate(results)
-            # pbar = tqdm(pbar, total=n)
+            pbar = tqdm(pbar, total=n)
             for i, x in pbar:
                 self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
                 gb += self.imgs[i].nbytes
-                # pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
-            # pbar.close()
+                pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
+            pbar.close()
 
     def cache_labels(self, path=Path('./labels.cache'), prefix=''):
         # Cache dataset labels, check images and read shapes
         x = {}  # dict
         nm, nf, ne, nc = 0, 0, 0, 0  # number missing, found, empty, duplicate
         pbar = zip(self.img_files, self.label_files)
-        # pbar = tqdm(pbar, desc='Scanning images', total=len(self.img_files))
+        pbar = tqdm(pbar, desc='Scanning images', total=len(self.img_files))
         for i, (im_file, lb_file) in enumerate(pbar):
             try:
                 # verify images
@@ -511,9 +511,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 nc += 1
                 logging.info(f'{prefix}WARNING: Ignoring corrupted image and/or label {im_file}: {e}')
 
-        #     pbar.desc = f"{prefix}Scanning '{path.parent / path.stem}' images and labels... " \
-        #                 f"{nf} found, {nm} missing, {ne} empty, {nc} corrupted"
-        # pbar.close()
+            pbar.desc = f"{prefix}Scanning '{path.parent / path.stem}' images and labels... " \
+                        f"{nf} found, {nm} missing, {ne} empty, {nc} corrupted"
+        pbar.close()
 
         if nf == 0:
             logging.info(f'{prefix}WARNING: No labels found in {path}. See {help_url}')
@@ -1205,7 +1205,7 @@ def extract_boxes(path='../coco128/'):  # from utils.datasets import *; extract_
     shutil.rmtree(path / 'classifier') if (path / 'classifier').is_dir() else None  # remove existing
     files = list(path.rglob('*.*'))
     n = len(files)  # number of files
-    # files = tqdm(files, total=n)
+    files = tqdm(files, total=n)
     for im_file in files:
         if im_file.suffix[1:] in img_formats:
             # image
@@ -1252,7 +1252,7 @@ def autosplit(path='../coco128', weights=(0.9, 0.1, 0.0), annotated_only=False):
 
     print(f'Autosplitting images from {path}' + ', using *.txt labeled images only' * annotated_only)
     pbar = zip(indices, files)
-    # pbar = tqdm(pbar, total=n)
+    pbar = tqdm(pbar, total=n)
     for i, img in pbar:
         if not annotated_only or Path(img2label_paths([str(img)])[0]).exists():  # check label
             with open(path / txt[i], 'a') as f:
