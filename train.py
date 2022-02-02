@@ -40,6 +40,12 @@ from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, de_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
+## for printing GPU stats
+from pynvml import *
+nvmlInit()
+import nvidia_smi
+nvidia_smi.nvmlInit()
+
 # handler = logging.StreamHandler()
 # handler.terminator = ""
 # logging.StreamHandler.terminator = ""
@@ -52,6 +58,14 @@ pfunc = logger.info
 # pfunc = print
 
 TQDM = False
+
+def gpu_stats():
+    n = nvmlDeviceGetCount()
+    pfunc(f'NVIDIA-SMI: {n} GPUs')
+    for i in range(n):
+        handle = nvidia_smi.nvmlDeviceGetHandleByIndex(i)
+        res = nvidia_smi.nvmlDeviceGetUtilizationRates(handle)
+        pfunc(f'{i} gpu: {res.gpu}%, gpu-mem: {res.memory}%')
 
 def upload_model(opt):
     global s3_client, first_upload
@@ -364,7 +378,6 @@ def train(hyp, opt, device, tb_writer=None):
             pfunc('==========================================================================================================')
             pfunc(f'Epoch {epoch+1}/{epochs}')
             if TQDM:
-                # pfunc(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'targets', 'imgs_sec'))
                 pbar = tqdm(pbar, total=nb)#, position=0, leave=True)  # progress bar
 
         optimizer.zero_grad()
@@ -384,6 +397,7 @@ def train(hyp, opt, device, tb_writer=None):
                         # pfunc('.')
                         if step%10==0:
                             pfunc(f'{step}%')
+                            gpu_stats()
 
             # Warmup
             if ni <= nw:
@@ -455,8 +469,6 @@ def train(hyp, opt, device, tb_writer=None):
 
         # logging.StreamHandler.terminator = "\n"
         if rank in [-1, 0]:
-            # pfunc(('\n' + '%10s' * 8) % ('total_min', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'targets', 'imgs_sec'))
-            # pfunc(('%10.2f' + '%10s' + '%10.4g' * 6) % ( ((time.time()-t1)/60), mem, *mloss, targets.shape[0], imgs_sec))
             pfunc(('\n' + '%10s' * 3) % ('total_min', 'gpu_mem', 'imgs_sec'))
             pfunc(('%10.2f' + '%10s' + '%10.4g') % ( ((time.time()-t1)/60), mem, imgs_sec))
             t1 = time.time()
