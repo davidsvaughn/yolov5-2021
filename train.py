@@ -471,7 +471,6 @@ def train(hyp, opt, device, tb_writer=None):
             pfunc(('\n' + '%10s' * 3) % ('total_min', 'gpu_mem', 'imgs_sec'))
             pfunc(('%10.2f' + '%10s' + '%10.4g') % ( ((time.time()-t1)/60), mem, imgs_sec))
             pfunc(f'num_img={num_img} opt.world_size={opt.world_size}')
-            # t1 = time.time()
 
         # if (epoch+1)%10==0:
         #     gc.collect()
@@ -484,6 +483,22 @@ def train(hyp, opt, device, tb_writer=None):
 
         # DDP process 0 or single-GPU
         if rank in [-1, 0]:
+
+            ############################################################
+            ## test parallel 
+            with torch.no_grad():
+                mod = ema.ema
+                mod.eval()
+                num_img = 0
+                for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
+                    imgs = imgs.to(device, non_blocking=True).float() / 255.0
+                    targets = targets.to(device)
+                    inf_out, train_out = mod(imgs, augment=False)
+                    # pred = mod(imgs)  # forward
+                    num_img += imgs.shape[0]
+                pfunc(f'NUM_TEST_IMG={num_img} opt.world_size={opt.world_size}')
+
+            ############################################################
             # mAP
             ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
             final_epoch = epoch + 1 == epochs
