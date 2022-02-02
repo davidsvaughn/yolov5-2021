@@ -156,7 +156,7 @@ def test(data,
         output = non_max_suppression(inf_out, labels=lb, multi_label=False, agnostic=True)#, conf_thres=conf_thres, iou_thres=iou_thres)
         t1 += time_synchronized() - t
 
-        pfunc(f'test_batch_size=={len(output)}')
+        # pfunc(f'test_batch_size=={len(output)}')
         # Statistics per image
         idx = []
         for si, pred in enumerate(output):

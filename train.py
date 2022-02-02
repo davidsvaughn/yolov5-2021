@@ -46,8 +46,6 @@ nvmlInit()
 import nvidia_smi
 nvidia_smi.nvmlInit()
 
-# handler = logging.StreamHandler()
-# handler.terminator = ""
 # logging.StreamHandler.terminator = ""
 logger = logging.getLogger(__name__)
 
@@ -374,6 +372,8 @@ def train(hyp, opt, device, tb_writer=None):
         pbar = enumerate(dataloader)
         
         if rank in [-1, 0]:
+            t1 = time.time()
+            num_img = 0
             steps = list(range(100,0,-2))
             pfunc('==========================================================================================================')
             pfunc(f'Epoch {epoch+1}/{epochs}')
@@ -381,7 +381,6 @@ def train(hyp, opt, device, tb_writer=None):
                 pbar = tqdm(pbar, total=nb)#, position=0, leave=True)  # progress bar
 
         optimizer.zero_grad()
-        num_img = 0
         
         # logging.StreamHandler.terminator = ""
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
@@ -471,13 +470,12 @@ def train(hyp, opt, device, tb_writer=None):
         if rank in [-1, 0]:
             pfunc(('\n' + '%10s' * 3) % ('total_min', 'gpu_mem', 'imgs_sec'))
             pfunc(('%10.2f' + '%10s' + '%10.4g') % ( ((time.time()-t1)/60), mem, imgs_sec))
-            t1 = time.time()
+            # t1 = time.time()
 
         # if (epoch+1)%10==0:
         #     gc.collect()
         #     torch.cuda.empty_cache()
-        #     if rank in [-1, 0]:
-        #         pfunc('\tempty cuda cache took %.2f sec.\n' % ((time.time() - t1)))
+        #     if rank in [-1, 0]: pfunc('\tempty cuda cache took %.2f sec.\n' % ((time.time() - t1)))
 
         # Scheduler
         lr = [x['lr'] for x in optimizer.param_groups]  # for tensorboard
@@ -490,6 +488,7 @@ def train(hyp, opt, device, tb_writer=None):
             final_epoch = epoch + 1 == epochs
             try:
                 if not opt.notest or final_epoch:  # Calculate mAP
+                    t1 = time.time()
                     wandb_logger.current_epoch = epoch + 1
                     results, maps, times = test.test(data_dict,
                                                     batch_size=test_batch_size,
@@ -503,7 +502,7 @@ def train(hyp, opt, device, tb_writer=None):
                                                     wandb_logger=wandb_logger,
                                                     compute_loss=compute_loss,
                                                     is_coco=is_coco)
-
+                    pfunc(f'Test Time: {(time.time()-t1)/60:0.2f}s')
                 # Write
                 with open(results_file, 'a') as f:
                     f.write('%10.4g' * 8 % results + '\n')  # append metrics, val_loss
