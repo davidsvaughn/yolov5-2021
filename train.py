@@ -490,13 +490,15 @@ def train(hyp, opt, device, tb_writer=None):
                 mod = ema.ema
                 mod.eval()
                 num_img = 0
+                bs = -1
                 for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
                     imgs = imgs.to(device, non_blocking=True).float() / 255.0
                     targets = targets.to(device)
                     inf_out, train_out = mod(imgs, augment=False)
                     # pred = mod(imgs)  # forward
                     num_img += imgs.shape[0]
-                pfunc(f'NUM_TEST_IMG={num_img} opt.world_size={opt.world_size}')
+                    if bs<0: bs = num_img
+                pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
 
             ############################################################
             # mAP
