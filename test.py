@@ -49,7 +49,7 @@ def test(data,
          plots=True,
          wandb_logger=None,
          compute_loss=None,
-         half_precision=False, ## dsv
+         half_precision=True, ## dsv
          is_coco=False,
          max_by_class=True,
          opt=None):
