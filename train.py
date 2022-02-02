@@ -470,6 +470,7 @@ def train(hyp, opt, device, tb_writer=None):
         if rank in [-1, 0]:
             pfunc(('\n' + '%10s' * 3) % ('total_min', 'gpu_mem', 'imgs_sec'))
             pfunc(('%10.2f' + '%10s' + '%10.4g') % ( ((time.time()-t1)/60), mem, imgs_sec))
+            pfunc(f'num_img={num_img} opt.world_size={opt.world_size}')
             # t1 = time.time()
 
         # if (epoch+1)%10==0:
