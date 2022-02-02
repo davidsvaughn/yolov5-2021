@@ -49,7 +49,7 @@ def test(data,
          plots=True,
          wandb_logger=None,
          compute_loss=None,
-         half_precision=True,
+         half_precision=False, ## dsv
          is_coco=False,
          max_by_class=True,
          opt=None):
@@ -88,8 +88,9 @@ def test(data,
         imgsz = check_img_size(imgsz, s=gs)  # check img_size
 
         # Multi-GPU disabled, incompatible with .half() https://github.com/ultralytics/yolov5/issues/99
-        # if device.type != 'cpu' and torch.cuda.device_count() > 1:
-        #     model = nn.DataParallel(model)
+        if not half_precision and device.type != 'cpu' and torch.cuda.device_count() > 1:
+            pfunc('TEST IN DATA_PARALLEL MODE!!!')
+            model = torch.nn.DataParallel(model)
 
     # Half
     half = device.type != 'cpu' and half_precision  # half precision only supported on CUDA
