@@ -129,9 +129,6 @@ def test(data,
     fmt = '%{}s'.format(2+max([len(s) for s in names]))
     s = (fmt + '%12s' * 7) % ('Class', 'Images', 'Targets', 'P', 'R', 'F1', 'mAP@.5', 'mAP@.5:.95')
     p, r, f1, mp, mr, map50, map, t0, t1, mf1 = 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.
-    ##
-    # dataloader = tqdm(dataloader, desc=s)
-    ##
 
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
@@ -159,6 +156,7 @@ def test(data,
         output = non_max_suppression(inf_out, labels=lb, multi_label=False, agnostic=True)#, conf_thres=conf_thres, iou_thres=iou_thres)
         t1 += time_synchronized() - t
 
+        pfunc(f'test_batch_size=={len(output)}')
         # Statistics per image
         idx = []
         for si, pred in enumerate(output):
