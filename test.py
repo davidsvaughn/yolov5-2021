@@ -73,6 +73,11 @@ def test(data,
     if training:  # called by train.py
         device = next(model.parameters()).device  # get model device
 
+        # Multi-GPU....
+        if not half_precision and device.type != 'cpu' and torch.cuda.device_count() > 1:
+            pfunc('TEST IN DATA_PARALLEL MODE!!!')
+            model = torch.nn.DataParallel(model)
+
     else:  # called directly
         set_logging()
         # device = select_device(opt.device, batch_size=batch_size)
