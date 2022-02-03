@@ -264,23 +264,29 @@ def train(hyp, opt, device, tb_writer=None):
         logger.info('Using SyncBatchNorm()')
 
     # Trainloader
-    dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt,
+    trainloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt,
                                             hyp=hyp, augment=True, cache=opt.cache_images, rect=opt.rect, rank=rank,
                                             world_size=opt.world_size, workers=opt.workers,
                                             image_weights=opt.image_weights, quad=opt.quad, prefix=colorstr('train: '))
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
-    nb = len(dataloader)  # number of batches
+    nb = len(trainloader)  # number of batches
     assert mlc < nc, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, nc, opt.data, nc - 1)
 
+
+    # Testloader
+    test_batch_size = batch_size
+    testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
+                                    hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=rank,
+                                    world_size=opt.world_size, workers=opt.workers,
+                                    pad=0.5, prefix=colorstr('val: '))[0]
     # Process 0
     if rank in [-1, 0]:
+        # test_batch_size = batch_size
+        # testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
+        #                                hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
+        #                                world_size=opt.world_size, workers=opt.workers,
+        #                                pad=0.5, prefix=colorstr('val: '))[0]
         new_best_model = False
-        test_batch_size = batch_size
-        testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
-                                       hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
-                                       world_size=opt.world_size, workers=opt.workers,
-                                       pad=0.5, prefix=colorstr('val: '))[0]
-
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
             c = torch.tensor(labels[:, 0])  # classes
@@ -342,7 +348,7 @@ def train(hyp, opt, device, tb_writer=None):
     ###########################################################################
 
     pfunc(f'Image sizes {imgsz} train, {imgsz_test} test\n'
-                f'Using {dataloader.num_workers} dataloader workers\n'
+                f'Using {trainloader.num_workers} trainloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
@@ -368,8 +374,8 @@ def train(hyp, opt, device, tb_writer=None):
 
         mloss = torch.zeros(4, device=device)  # mean losses
         if rank != -1:
-            dataloader.sampler.set_epoch(epoch)
-        pbar = enumerate(dataloader)
+            trainloader.sampler.set_epoch(epoch)
+        pbar = enumerate(trainloader)
         
         if rank in [-1, 0]:
             t1 = time.time()
@@ -481,30 +487,46 @@ def train(hyp, opt, device, tb_writer=None):
         lr = [x['lr'] for x in optimizer.param_groups]  # for tensorboard
         scheduler.step()
 
-        # DDP process 0 or single-GPU
-        if rank in [-1, 0]:
-
-            ############################################################
-            ## test parallel 
-            with torch.no_grad():
-                mod = ema.ema
-                mod.eval()
-                num_img = 0
-                bs = -1
-                for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
-                    imgs = imgs.to(device, non_blocking=True).float() / 255.0
-                    targets = targets.to(device)
-                    inf_out, train_out = mod(imgs, augment=False)
-                    # pred = mod(imgs)  # forward
+        ################################################################
+        ## DDP TESTING......
+        model.eval()
+        with torch.no_grad():
+            if rank in [-1, 0]: num_img,bs = 0,-1
+            for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
+                imgs = imgs.to(device, non_blocking=True).float() / 255.0
+                targets = targets.to(device)
+                inf_out, train_out = model(imgs, augment=False)
+                if rank in [-1, 0]:
                     num_img += imgs.shape[0]
                     if bs<0: bs = num_img
-                pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
+        if rank in [-1, 0]:
+            pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
+
+        # DDP process 0 or single-GPU
+        if rank in [-1, 0]:
+            ############################################################
+            ## test parallel 
+
+            # with torch.no_grad():
+            #     mod = ema.ema
+            #     mod.eval()
+            #     num_img = 0
+            #     bs = -1
+            #     for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
+            #         imgs = imgs.to(device, non_blocking=True).float() / 255.0
+            #         targets = targets.to(device)
+            #         inf_out, train_out = mod(imgs, augment=False)
+            #         # pred = mod(imgs)  # forward
+            #         num_img += imgs.shape[0]
+            #         if bs<0: bs = num_img
+            #     pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
 
             ############################################################
             # mAP
             ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
             final_epoch = epoch + 1 == epochs
             try:
+                z=1/0 ## force fail
                 if not opt.notest or final_epoch:  # Calculate mAP
                     t1 = time.time()
                     wandb_logger.current_epoch = epoch + 1
