@@ -504,6 +504,7 @@ def train(hyp, opt, device, tb_writer=None):
                     # outputs = non_max_suppression(outputs, multi_label=False, agnostic=True)
                     data = { 'outputs':outputs }#, 'rank':rank, 'targets':targets, 'shapes':shapes, 'imgs_shape': imgs.shape }
                     all_data = [None for _ in range(opt.world_size)]
+                    dist.barrier()
                     dist.all_gather_object(all_data, data)
                     if rank in [-1, 0]:
                         num_img += nb
