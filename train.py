@@ -502,7 +502,7 @@ def train(hyp, opt, device, tb_writer=None):
                     targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
                     inf_out, train_out = model(imgs, augment=False)
                     outputs = non_max_suppression(inf_out, multi_label=False, agnostic=True)
-                    data = { 'rank':rank, 'outputs':outputs, 'targets':targets, 'shapes':shapes, 'imgs_shape': imgs.shape }
+                    data = { 'rank':rank, 'outputs':outputs }#, 'targets':targets, 'shapes':shapes, 'imgs_shape': imgs.shape }
                     all_data = [None for _ in range(opt.world_size)]
                     dist.all_gather_object(all_data, data)
                     if rank in [-1, 0]:
@@ -514,11 +514,11 @@ def train(hyp, opt, device, tb_writer=None):
                         for d in all_data:
                             pfunc(f"RANK={d['rank']}")
                             output = d['outputs']
-                            tgts = d['targets']
-                            idx = np.unique(tgts[:,0].cpu().numpy())
                             for j,op in enumerate(output):
                                 pfunc(f'output[{j}] : {op.shape}')
-                            pfunc(f"TGTS_IDX={list(idx)}")
+                            # tgts = d['targets']
+                            # idx = np.unique(tgts[:,0].cpu().numpy())
+                            # pfunc(f"TGTS_IDX={list(idx)}")
                             
 
 
