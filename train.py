@@ -500,12 +500,14 @@ def train(hyp, opt, device, tb_writer=None):
                     targets = targets.to(device)
                     inf_out, train_out = model(imgs, augment=False)
                     output = non_max_suppression(inf_out, multi_label=False, agnostic=True)
-                    all_output = [torch.zeros_like(output) for _ in range(opt.world_size)]
-                    dist.all_gather_object(all_output, output)
+                    data = { 'x':output, 'rank':rank }
+                    all_data = [None for _ in range(opt.world_size)]
+                    dist.all_gather_object(all_data, data)
                     if rank in [-1, 0]:
                         num_img += imgs.shape[0]
                         if bs<0: bs = num_img
-                        [pfunc(f'TEST_BATCH_{batch_i} : {x.view(-1)[0]}') for x in all_output]
+                        [pfunc(f"TEST_BATCH_{batch_i} : {len(d['x'])}") for d in all_data]
+                        [pfunc(f"TEST_BATCH_{batch_i} : {d['x'][0].shape}") for d in all_data]
             if rank in [-1, 0]:
                 pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
         except Exception as e:
@@ -513,24 +515,6 @@ def train(hyp, opt, device, tb_writer=None):
 
         # DDP process 0 or single-GPU
         if rank in [-1, 0]:
-            ############################################################
-            ## test parallel 
-
-            # with torch.no_grad():
-            #     mod = ema.ema
-            #     mod.eval()
-            #     num_img = 0
-            #     bs = -1
-            #     for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
-            #         imgs = imgs.to(device, non_blocking=True).float() / 255.0
-            #         targets = targets.to(device)
-            #         inf_out, train_out = mod(imgs, augment=False)
-            #         # pred = mod(imgs)  # forward
-            #         num_img += imgs.shape[0]
-            #         if bs<0: bs = num_img
-            #     pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
-
-            ############################################################
             # mAP
             ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
             final_epoch = epoch + 1 == epochs
