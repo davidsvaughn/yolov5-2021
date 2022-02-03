@@ -489,22 +489,25 @@ def train(hyp, opt, device, tb_writer=None):
 
         ################################################################
         ## DDP TESTING......
-        model.eval()
-        with torch.no_grad():
-            if rank in [-1, 0]: num_img,bs = 0,-1
-            for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
-                imgs = imgs.to(device, non_blocking=True).float() / 255.0
-                targets = targets.to(device)
-                inf_out, train_out = model(imgs, augment=False)
-                output = non_max_suppression(inf_out, multi_label=False, agnostic=True)
-                all_output = [torch.zeros_like(output) for _ in range(opt.world_size)]
-                dist.all_gather_object(all_output, output)
-                if rank in [-1, 0]:
-                    num_img += imgs.shape[0]
-                    if bs<0: bs = num_img
-                    [pfunc(f'TEST_BATCH_{batch_i} : {x.view(-1)[0]}') for x in all_output]
-        if rank in [-1, 0]:
-            pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
+        try:
+            model.eval()
+            with torch.no_grad():
+                if rank in [-1, 0]: num_img,bs = 0,-1
+                for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
+                    imgs = imgs.to(device, non_blocking=True).float() / 255.0
+                    targets = targets.to(device)
+                    inf_out, train_out = model(imgs, augment=False)
+                    output = non_max_suppression(inf_out, multi_label=False, agnostic=True)
+                    all_output = [torch.zeros_like(output) for _ in range(opt.world_size)]
+                    dist.all_gather_object(all_output, output)
+                    if rank in [-1, 0]:
+                        num_img += imgs.shape[0]
+                        if bs<0: bs = num_img
+                        [pfunc(f'TEST_BATCH_{batch_i} : {x.view(-1)[0]}') for x in all_output]
+            if rank in [-1, 0]:
+                pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
+        except Exception as e:
+            pfunc('TESTDDP FAILURE:'+ str(e))
 
         # DDP process 0 or single-GPU
         if rank in [-1, 0]:
