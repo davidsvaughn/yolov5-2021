@@ -498,8 +498,8 @@ def train(hyp, opt, device, tb_writer=None):
                 for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
                     imgs = imgs.to(device, non_blocking=True).float() / 255.0
                     nb, _, height, width = imgs.shape  # batch size, channels, height, width
-                    targets = targets.to(device)
-                    targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
+                    # targets = targets.to(device)
+                    # targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
                     inf_out, train_out = model(imgs, augment=False)
                     outputs = non_max_suppression(inf_out, multi_label=False, agnostic=True)
                     data = { 'rank':rank, 'outputs':outputs }#, 'targets':targets, 'shapes':shapes, 'imgs_shape': imgs.shape }
