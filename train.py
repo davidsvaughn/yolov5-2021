@@ -501,25 +501,27 @@ def train(hyp, opt, device, tb_writer=None):
                     # targets = targets.to(device)
                     # targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
                     outputs = model(imgs, augment=False)[0]
-                    # outputs = non_max_suppression(outputs, multi_label=False, agnostic=True)
-                    data = { 'outputs':outputs }#, 'rank':rank, 'targets':targets, 'shapes':shapes, 'imgs_shape': imgs.shape }
-                    all_data = [None for _ in range(opt.world_size)]
-                    dist.barrier()
-                    dist.all_gather_object(all_data, data)
+                    outputs = non_max_suppression(outputs, multi_label=False, agnostic=True)
+                    # data = { 'outputs':outputs }#, 'rank':rank, 'targets':targets, 'shapes':shapes, 'imgs_shape': imgs.shape }
+                    # all_data = [None for _ in range(opt.world_size)]
+                    # dist.all_gather_object(all_data, data)
                     if rank in [-1, 0]:
                         num_img += nb
                         if bs<0: bs = nb
                         # [pfunc(f"TEST_BATCH_{batch_i} : {len(d['outputs'])}") for d in all_data]
                         # [pfunc(f"TEST_BATCH_{batch_i} : {d['outputs'][0].shape}") for d in all_data]
                         pfunc(f"TEST_BATCH_{batch_i}")
-                        for d in all_data:
-                            # pfunc(f"RANK={d['rank']}")
-                            output = d['outputs']
-                            for j,op in enumerate(output):
-                                pfunc(f'output[{j}] : {op.shape}')
-                            # tgts = d['targets']
-                            # idx = np.unique(tgts[:,0].cpu().numpy())
-                            # pfunc(f"TGTS_IDX={list(idx)}")
+                        output = outputs
+                        for j,op in enumerate(output):
+                            pfunc(f'output[{j}] : {op.shape}')
+                        # for d in all_data:
+                        #     # pfunc(f"RANK={d['rank']}")
+                        #     output = d['outputs']
+                        #     for j,op in enumerate(output):
+                        #         pfunc(f'output[{j}] : {op.shape}')
+                        #     # tgts = d['targets']
+                        #     # idx = np.unique(tgts[:,0].cpu().numpy())
+                        #     # pfunc(f"TGTS_IDX={list(idx)}")
                             
 
 
