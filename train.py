@@ -33,7 +33,7 @@ from utils.autoanchor import check_anchors
 from utils.datasets import create_dataloader
 from utils.general import labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds, \
     fitness, strip_optimizer, get_latest_run, check_dataset, check_file, check_git_status, check_img_size, \
-    check_requirements, print_mutation, set_logging, one_cycle, colorstr
+    check_requirements, print_mutation, set_logging, one_cycle, colorstr, non_max_suppression
 from utils.google_utils import attempt_download
 from utils.loss import ComputeLoss
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
@@ -496,9 +496,13 @@ def train(hyp, opt, device, tb_writer=None):
                 imgs = imgs.to(device, non_blocking=True).float() / 255.0
                 targets = targets.to(device)
                 inf_out, train_out = model(imgs, augment=False)
+                output = non_max_suppression(inf_out, multi_label=False, agnostic=True)
+                all_output = [torch.zeros_like(output) for _ in range(opt.world_size)]
+                dist.all_gather_object(all_output, output)
                 if rank in [-1, 0]:
                     num_img += imgs.shape[0]
                     if bs<0: bs = num_img
+                    [pfunc(f'TEST_BATCH_{batch_i} : {x.view(-1)[0]}') for x in all_output]
         if rank in [-1, 0]:
             pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
 
