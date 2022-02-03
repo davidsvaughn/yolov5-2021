@@ -497,17 +497,31 @@ def train(hyp, opt, device, tb_writer=None):
                 if rank in [-1, 0]: num_img,bs = 0,-1
                 for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
                     imgs = imgs.to(device, non_blocking=True).float() / 255.0
+                    nb, _, height, width = imgs.shape  # batch size, channels, height, width
                     targets = targets.to(device)
+                    targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
                     inf_out, train_out = model(imgs, augment=False)
-                    output = non_max_suppression(inf_out, multi_label=False, agnostic=True)
-                    data = { 'x':output, 'rank':rank }
+                    outputs = non_max_suppression(inf_out, multi_label=False, agnostic=True)
+                    data = { 'rank':rank, 'outputs':outputs, 'targets':targets, 'shapes':shapes, 'imgs_shape': imgs.shape }
                     all_data = [None for _ in range(opt.world_size)]
                     dist.all_gather_object(all_data, data)
                     if rank in [-1, 0]:
-                        num_img += imgs.shape[0]
-                        if bs<0: bs = num_img
-                        [pfunc(f"TEST_BATCH_{batch_i} : {len(d['x'])}") for d in all_data]
-                        [pfunc(f"TEST_BATCH_{batch_i} : {d['x'][0].shape}") for d in all_data]
+                        num_img += nb
+                        if bs<0: bs = nb
+                        # [pfunc(f"TEST_BATCH_{batch_i} : {len(d['outputs'])}") for d in all_data]
+                        # [pfunc(f"TEST_BATCH_{batch_i} : {d['outputs'][0].shape}") for d in all_data]
+                        pfunc(f"TEST_BATCH_{batch_i}")
+                        for d in all_data:
+                            pfunc(f"RANK={d['rank']}")
+                            output = d['outputs']
+                            tgts = d['targets']
+                            idx = np.unique(tgts[:,0].cpu().numpy())
+                            for j,op in enumerate(output):
+                                pfunc(f'output[{j}] : {op.shape}')
+                            pfunc(f"TGTS_IDX={list(idx)}")
+                            
+
+
             if rank in [-1, 0]:
                 pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
         except Exception as e:
