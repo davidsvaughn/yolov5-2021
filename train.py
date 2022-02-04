@@ -523,7 +523,7 @@ def train(hyp, opt, device, tb_writer=None):
                     imgs = imgs.to(device, non_blocking=True).float() / 255.0
                     nb, _, height, width = imgs.shape  # batch size, channels, height, width
                     # targets = targets.to(device)
-                    # targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
+                    targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
                     output = model(imgs, augment=False)[0]
                     output = non_max_suppression(output, multi_label=False, agnostic=True)
                     output = output[0] ## only works with batch_size==1 (for now...)
