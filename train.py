@@ -491,13 +491,15 @@ def train(hyp, opt, device, tb_writer=None):
 
         ################################################################
         ## DDP TESTING......
-        def gather_tensors(t, device, world_size):
+        def gather_tensors(t, device, world_size, debug=None, batch_i=-1):
             shape = torch.tensor(t.shape).to(device)
             out_shapes = [torch.zeros_like(shape, device=device) for _ in range(world_size)]
             dist.all_gather(out_shapes, shape)
-            if rank in [-1, 0]:
-                pfunc('SHAPES....')
-                [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
+            if debug:
+                pfunc(debug)
+                if rank in [-1, 0]:
+                    pfunc('SHAPES....')
+                    [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
             my_dim = int(shape[0])
             all_dims = [int(x[0]) for x in out_shapes]
             max_dim = max(all_dims)
@@ -508,8 +510,9 @@ def train(hyp, opt, device, tb_writer=None):
             if rank in [-1, 0]:
                 # padded_output = [x.cpu().numpy() for x in output_list]
                 outputs = [x[:all_dims[j],:] for j,x in enumerate(output_list)]
-                pfunc('TENSORS....')
-                [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
+                if debug:
+                    pfunc('TENSORS....')
+                    [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
                 return outputs
             return None
 
@@ -529,10 +532,11 @@ def train(hyp, opt, device, tb_writer=None):
                     output = output[0] ## only works with batch_size==1 (for now...)
                     ####################
 
-                    pfunc('OUTPUT....')
-                    all_output = gather_tensors(output, device, opt.world_size)
-                    pfunc('TARGETS....')
-                    all_targets = gather_tensors(targets, device, opt.world_size)
+                    all_output = gather_tensors(output, device, opt.world_size, debug='OUTPUT', batch_i=batch_i)
+                    all_targets = gather_tensors(targets, device, opt.world_size, debug='TARGETS', batch_i=batch_i)
+
+                    hw = torch.tensor([height, width], device=device)
+                    all_hw = gather_tensors(hw, device, opt.world_size)
 
                     # shape = torch.tensor(output.shape).to(device)#, non_blocking=True)
                     # out_shapes = [torch.zeros_like(shape, device=device) for _ in range(opt.world_size)]
