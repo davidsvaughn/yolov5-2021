@@ -503,7 +503,7 @@ def train(hyp, opt, device, tb_writer=None):
                     outputs = model(imgs, augment=False)[0]
                     outputs = non_max_suppression(outputs, multi_label=False, agnostic=True)
                     ####################
-                    shape = outputs[0].shape
+                    shape = torch.tensor(outputs[0].shape)
                     out_shapes = [torch.zeros_like(shape) for _ in range(opt.world_size)]
                     dist.all_gather(out_shapes, shape)
                     if rank in [-1, 0]:
