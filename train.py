@@ -33,12 +33,14 @@ from utils.autoanchor import check_anchors
 from utils.datasets import create_dataloader
 from utils.general import labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds, \
     fitness, strip_optimizer, get_latest_run, check_dataset, check_file, check_git_status, check_img_size, \
-    check_requirements, print_mutation, set_logging, one_cycle, colorstr, non_max_suppression
+    check_requirements, print_mutation, set_logging, one_cycle, colorstr, non_max_suppression, scale_coords, xywh2xyxy, box_iou
 from utils.google_utils import attempt_download
 from utils.loss import ComputeLoss
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, de_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
+
+from utils.metrics import ap_per_class
 
 ## for printing GPU stats
 from pynvml import *
@@ -520,8 +522,11 @@ def train(hyp, opt, device, tb_writer=None):
             model.eval()
             with torch.no_grad():
                 if rank in [-1, 0]:
-                    num_img,bs = 0,-1
                     t1 = time.time()
+                    stats, seen = [],0
+                    iou_thres = 0.25
+                    iouv = torch.arange(iou_thres, 1, 0.05).to(device) # iou_thres : 0.95 : 0.05
+                    niou = iouv.numel()
                 for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
                     imgs = imgs.to(device, non_blocking=True).float() / 255.0
                     nb, _, height, width = imgs.shape  # batch size, channels, height, width
@@ -557,60 +562,112 @@ def train(hyp, opt, device, tb_writer=None):
                             s = [[int(s[0]), int(s[1])],[s[2:4],s[4:]]]
                             shapes.append(s)
                         
-                        pfunc(f'TARGETS: {targets.shape}')
-                        [pfunc(f"TEST_BATCH_{batch_i} : output[{j}] : {x.shape}") for j,x in enumerate(output)]
-                        [pfunc(f"TEST_BATCH_{batch_i} : shapes[{j}] : {x}") for j,x in enumerate(shapes)]
+                        ## debugging msgs....
+                        # pfunc(f'TARGETS: {targets.shape}')
+                        # [pfunc(f"TEST_BATCH_{batch_i} : output[{j}] : {x.shape}") for j,x in enumerate(output)]
+                        # [pfunc(f"TEST_BATCH_{batch_i} : shapes[{j}] : {x}") for j,x in enumerate(shapes)]
 
+                        ## METRICS
+                        idx = []
+                        for si, pred in enumerate(output):
+                            labels = targets[targets[:, 0] == si, 1:]
+                            nl = len(labels)
+                            tcls = labels[:, 0].tolist() if nl else []  # target class
+                            # path = Path(paths[si])
+                            seen += 1
+                            if len(pred) == 0:
+                                idx.append(None)
+                                if nl:
+                                    stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
+                                continue
+                            # Filter out-of-frame predictions (in padding)
+                            # gain, img_box = shapes[si][1][0][0], None
+                            # if gain==1:
+                            #     img_box = torch.zeros([1,4])
+                            #     img_box[0,:2] = torch.FloatTensor(shapes[si][1][1])
+                            #     img_box[0,2:] = torch.FloatTensor(shapes[si][0]) + torch.FloatTensor(shapes[si][1][1])
+                            #     img_box = img_box.to(device)
+                            #     io2s = box_io2(img_box, pred[:, :4])
+                            #     k = (io2s > 0.95).nonzero(as_tuple=True)[1]
+                            #     pred = pred[k,:]
+                            #     idx.append(k)
+                            # else:
+                            #     idx.append(None)
+                            idx.append(None)
+                            predn = pred.clone()
+                            scale_coords(all_hw[si], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
 
+                            # Assign all predictions as incorrect
+                            correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
+                            if nl:
+                                detected = []  # target indices
+                                tcls_tensor = labels[:, 0]
 
-                    # shape = torch.tensor(output.shape).to(device)#, non_blocking=True)
-                    # out_shapes = [torch.zeros_like(shape, device=device) for _ in range(opt.world_size)]
-                    # dist.all_gather(out_shapes, shape)
-                    # if rank in [-1, 0]:
-                    #     pfunc('SHAPES....')
-                    #     [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
+                                # target boxes
+                                tbox = xywh2xyxy(labels[:, 1:5])
+                                scale_coords(all_hw[si], tbox, shapes[si][0], shapes[si][1])  # native-space labels
+                                # if plots: confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1))
 
-                    # my_dim = int(shape[0])
-                    # all_dims = [int(x[0]) for x in out_shapes]
-                    # max_dim = max(all_dims)
-                    # output_list = [torch.zeros([max_dim,6], device=device) for _ in range(opt.world_size)]
-                    # padded_output = torch.zeros([max_dim,6], device=device) # dtype=output.dtype
-                    # padded_output[:my_dim,:] = output
-                    # dist.all_gather(output_list, padded_output)
-                    # if rank in [-1, 0]:
-                    #     padded_output = [x.cpu().numpy() for x in output_list]
-                    #     outputs = [x[:all_dims[j],:] for j,x in enumerate(padded_output)]
-                    #     pfunc('TENSORS....')
-                    #     [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
+                                # Per target class
+                                for cls in torch.unique(tcls_tensor):
+                                    ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1)  # target indices
+                                    pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # prediction indices
 
-                    #####################
-                    # data = { 'outputs':outputs }#, 'rank':rank, 'targets':targets, 'shapes':shapes, 'imgs_shape': imgs.shape }
-                    # all_data = [None for _ in range(opt.world_size)]
-                    # dist.all_gather_object(all_data, data)
-                    #####
-                    # dist.all_gather_multigpu()
-                    # if rank in [-1, 0]:
-                    #     num_img += nb
-                    #     if bs<0: bs = nb
-                    #     # [pfunc(f"TEST_BATCH_{batch_i} : {len(d['outputs'])}") for d in all_data]
-                    #     # [pfunc(f"TEST_BATCH_{batch_i} : {d['outputs'][0].shape}") for d in all_data]
-                    #     pfunc(f"TEST_BATCH_{batch_i}")
-                    #     output = outputs
-                    #     for j,op in enumerate(output):
-                    #         pfunc(f'output[{j}] : {op.shape}')
-                    #     # for d in all_data:
-                    #     #     # pfunc(f"RANK={d['rank']}")
-                    #     #     output = d['outputs']
-                    #     #     for j,op in enumerate(output):
-                    #     #         pfunc(f'output[{j}] : {op.shape}')
-                    #     #     # tgts = d['targets']
-                    #     #     # idx = np.unique(tgts[:,0].cpu().numpy())
-                    #     #     # pfunc(f"TGTS_IDX={list(idx)}")
-                            
+                                    # Search for detections
+                                    if pi.shape[0]:
+                                        # Prediction to target ious
+                                        ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1)  # best ious, indices
 
+                                        # Append detections
+                                        detected_set = set()
+                                        for j in (ious > iouv[0]).nonzero(as_tuple=False):
+                                            d = ti[i[j]]  # detected target... index into target array....
+                                            if d.item() not in detected_set:
+                                                detected_set.add(d.item())
+                                                detected.append(d)
+                                                correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
+                                                k = pi[j] ## index into pred array.....
+                                                # pred_target_dims[k,2:] = target_dims[d]
+                                                if len(detected) == nl:  # all targets already located in image
+                                                    break
+
+                            # Append statistics (correct, conf, pcls, tcls)
+                            stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))              
 
             if rank in [-1, 0]:
-                pfunc(f'Test Time: {(time.time()-t1)/60:0.2f}s')
+                # Compute statistics
+                stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
+                conf_best = -1
+                ct=None
+                max_by_class=True
+                conf_thres=-1
+                if len(stats) and stats[0].any():
+                    mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names, 
+                                                                                                            ct=ct, max_by_class=max_by_class, conf_thres=conf_thres)
+                else:
+                    nt = torch.zeros(1)
+                # Print results
+                pfunc('------------------------------------------- Validation Set -----------------------------------------------')
+                fmt = '%{}s'.format(2+max([len(s) for s in names]))
+                s = (fmt + '%12s' * 7) % ('Class', 'Images', 'Targets', 'P', 'R', 'F1', 'mAP@.5', 'mAP@.5:.95')
+                pfunc(s)
+                pf = fmt + '%12.3g' * 7  # print format
+                # Print results per class
+                if nc < 50 and nc > 1 and len(stats):
+                    for i, c in enumerate(ap_class):
+                        pfunc(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i])) #log
+                ## Print averages
+                if nc>1:
+                    pfunc('')
+                    pfunc(pf % ('AVG', seen, nt.sum(), p.mean(), r.mean(), f1.mean(), ap50.mean(), ap.mean())) ## unweighted average
+                ss = 'WEIGHTED AVG' if nc>1 else names[0]
+                pfunc(pf % (ss, seen, nt.sum(), mp, mr, mf1, map50, map)) ## weighted average (if nc>1)
+                if conf_best>-1:
+                    pfunc('\nOptimal Confidence Threshold: {0:0.3f}'.format(conf_best)) #log
+                    if max_by_class:
+                        pfunc('Optimal Confidence Thresholds (Per-Class): {}'.format(list(cc.round(3)))) #log
+
+                pfunc(f'Validation Time: {(time.time()-t1)/60:0.2f}s')
                 # pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
         except Exception as e:
             pfunc('TESTDDP FAILURE:'+ str(e))
