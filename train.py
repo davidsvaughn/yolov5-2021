@@ -642,8 +642,7 @@ def train(hyp, opt, device, tb_writer=None):
                 max_by_class=True
                 conf_thres=-1
                 if len(stats) and stats[0].any():
-                    mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names, 
-                                                                                                            ct=ct, max_by_class=max_by_class, conf_thres=conf_thres)
+                    mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, max_by_class=max_by_class, conf_thres=conf_thres)
                 else:
                     nt = torch.zeros(1)
                 # Print results
