@@ -532,12 +532,36 @@ def train(hyp, opt, device, tb_writer=None):
                     output = output[0] ## only works with batch_size==1 (for now...)
                     ####################
 
-                    all_output = gather_tensors(output, device, opt.world_size, debug='OUTPUT', batch_i=batch_i)
-                    all_targets = gather_tensors(targets, device, opt.world_size, debug='TARGETS', batch_i=batch_i)
+                    all_output = gather_tensors(output, device, opt.world_size)#, debug='OUTPUT', batch_i=batch_i)
+                    all_targets = gather_tensors(targets, device, opt.world_size)#, debug='TARGETS', batch_i=batch_i)
 
+                    ## imgs[0].shape
                     hw = torch.tensor([height, width]).to(device)
                     all_hw = [torch.zeros_like(hw, device=device) for _ in range(opt.world_size)]
                     dist.all_gather(all_hw, hw)
+
+                    ## shapes
+                    s = shapes[0]
+                    t = torch.tensor(s[0] + s[1][0] + s[1][1]).to(device)
+                    all_shapes = [torch.zeros_like(t, device=device) for _ in range(opt.world_size)]
+                    dist.all_gather(all_shapes, t)
+
+                    if rank in [-1, 0]:
+                        output = all_output
+                        for j,targets in enumerate(all_targets):
+                            targets[:,0] = j ## restore indices
+                        targets = torch.cat(all_targets, 0)
+                        shapes = []
+                        for t in all_shapes:
+                            s = list(t.cpu().numpy())
+                            s = [[int(s[0]), int(s[1])],[s[2:4],s[4:]]]
+                            shapes.append(s)
+                        
+                        pfunc(f'TARGETS: {targets.shape}')
+                        [pfunc(f"TEST_BATCH_{batch_i} : output[{j}] : {x.shape}") for j,x in enumerate(output)]
+                        [pfunc(f"TEST_BATCH_{batch_i} : shapes[{j}] : {x}") for j,x in enumerate(shapes)]
+
+
 
                     # shape = torch.tensor(output.shape).to(device)#, non_blocking=True)
                     # out_shapes = [torch.zeros_like(shape, device=device) for _ in range(opt.world_size)]
