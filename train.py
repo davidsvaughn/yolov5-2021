@@ -278,11 +278,8 @@ def train(hyp, opt, device, tb_writer=None):
 
 
     # Testloader
-    test_batch_size = batch_size
-    # test_batch_size = opt.world_size ## so test_batch_size-per-GPU = 1 (needed for DDP validation)
-    if rank in [-1, 0]:
-        pfunc(f'!!!!!!!! test_batch_size = {test_batch_size}')
-        # pfunc(f'!!!!!!!! SETTING test_batch_size = opt.world_size = {opt.world_size}')
+    # test_batch_size = batch_size
+    test_batch_size = 1 ## so test_batch_size-per-GPU = 1 (needed for DDP validation)
     testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
                                     hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=rank,
                                     world_size=opt.world_size, workers=opt.workers,
