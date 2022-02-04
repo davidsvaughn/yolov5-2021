@@ -491,6 +491,28 @@ def train(hyp, opt, device, tb_writer=None):
 
         ################################################################
         ## DDP TESTING......
+        def gather_tensors(t, device, world_size):
+            shape = torch.tensor(t.shape).to(device)
+            out_shapes = [torch.zeros_like(shape, device=device) for _ in range(world_size)]
+            dist.all_gather(out_shapes, shape)
+            if rank in [-1, 0]:
+                pfunc('SHAPES....')
+                [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
+            my_dim = int(shape[0])
+            all_dims = [int(x[0]) for x in out_shapes]
+            max_dim = max(all_dims)
+            output_list = [torch.zeros([max_dim,6], device=device) for _ in range(world_size)]
+            padded_output = torch.zeros([max_dim,6], device=device)
+            padded_output[:my_dim,:] = t
+            dist.all_gather(output_list, padded_output)
+            if rank in [-1, 0]:
+                padded_output = [x.cpu().numpy() for x in output_list]
+                outputs = [x[:all_dims[j],:] for j,x in enumerate(padded_output)]
+                pfunc('TENSORS....')
+                [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
+                return outputs
+            return None
+
         try:
             model.eval()
             with torch.no_grad():
@@ -504,28 +526,30 @@ def train(hyp, opt, device, tb_writer=None):
                     # targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
                     output = model(imgs, augment=False)[0]
                     output = non_max_suppression(output, multi_label=False, agnostic=True)
+                    output = output[0] ## only works with batch_size==1 (for now...)
                     ####################
 
-                    output = output[0] ## only works with batch_size==1 (for now...)
-                    shape = torch.tensor(output.shape).to(device)#, non_blocking=True)
-                    out_shapes = [torch.zeros_like(shape, device=device) for _ in range(opt.world_size)]
-                    dist.all_gather(out_shapes, shape)
-                    if rank in [-1, 0]:
-                        pfunc('SHAPES....')
-                        [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
+                    outputs = gather_tensors(output, device, opt.world_size)
 
-                    my_dim = int(shape[0])
-                    all_dims = [int(x[0]) for x in out_shapes]
-                    max_dim = max(all_dims)
-                    output_list = [torch.zeros([max_dim,6], device=device) for _ in range(opt.world_size)]
-                    padded_output = torch.zeros([max_dim,6], device=device) # dtype=output.dtype
-                    padded_output[:my_dim,:] = output
-                    dist.all_gather(output_list, padded_output)
-                    if rank in [-1, 0]:
-                        padded_output = [x.cpu().numpy() for x in output_list]
-                        outputs = [x[:all_dims[j],:] for j,x in enumerate(padded_output)]
-                        pfunc('TENSORS....')
-                        [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
+                    # shape = torch.tensor(output.shape).to(device)#, non_blocking=True)
+                    # out_shapes = [torch.zeros_like(shape, device=device) for _ in range(opt.world_size)]
+                    # dist.all_gather(out_shapes, shape)
+                    # if rank in [-1, 0]:
+                    #     pfunc('SHAPES....')
+                    #     [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
+
+                    # my_dim = int(shape[0])
+                    # all_dims = [int(x[0]) for x in out_shapes]
+                    # max_dim = max(all_dims)
+                    # output_list = [torch.zeros([max_dim,6], device=device) for _ in range(opt.world_size)]
+                    # padded_output = torch.zeros([max_dim,6], device=device) # dtype=output.dtype
+                    # padded_output[:my_dim,:] = output
+                    # dist.all_gather(output_list, padded_output)
+                    # if rank in [-1, 0]:
+                    #     padded_output = [x.cpu().numpy() for x in output_list]
+                    #     outputs = [x[:all_dims[j],:] for j,x in enumerate(padded_output)]
+                    #     pfunc('TENSORS....')
+                    #     [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
 
                     #####################
                     # data = { 'outputs':outputs }#, 'rank':rank, 'targets':targets, 'shapes':shapes, 'imgs_shape': imgs.shape }
