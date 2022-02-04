@@ -535,8 +535,9 @@ def train(hyp, opt, device, tb_writer=None):
                     all_output = gather_tensors(output, device, opt.world_size, debug='OUTPUT', batch_i=batch_i)
                     all_targets = gather_tensors(targets, device, opt.world_size, debug='TARGETS', batch_i=batch_i)
 
-                    hw = torch.tensor([height, width], device=device)
-                    all_hw = gather_tensors(hw, device, opt.world_size)
+                    hw = torch.tensor([height, width]).to(device)
+                    all_hw = [torch.zeros_like(hw, device=device) for _ in range(opt.world_size)]
+                    dist.all_gather(all_hw, hw)
 
                     # shape = torch.tensor(output.shape).to(device)#, non_blocking=True)
                     # out_shapes = [torch.zeros_like(shape, device=device) for _ in range(opt.world_size)]
