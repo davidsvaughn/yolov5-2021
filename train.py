@@ -503,8 +503,8 @@ def train(hyp, opt, device, tb_writer=None):
                     outputs = model(imgs, augment=False)[0]
                     outputs = non_max_suppression(outputs, multi_label=False, agnostic=True)
                     ####################
-                    shape = torch.tensor(outputs[0].shape)
-                    out_shapes = [torch.zeros_like(shape) for _ in range(opt.world_size)]
+                    shape = torch.tensor(outputs[0].shape).to(device)#, non_blocking=True)
+                    out_shapes = [torch.zeros_like(shape, device=device) for _ in range(opt.world_size)]
                     dist.all_gather(out_shapes, shape)
                     if rank in [-1, 0]:
                         [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
