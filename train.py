@@ -529,7 +529,10 @@ def train(hyp, opt, device, tb_writer=None):
                     output = output[0] ## only works with batch_size==1 (for now...)
                     ####################
 
-                    outputs = gather_tensors(output, device, opt.world_size)
+                    pfunc('OUTPUT....')
+                    all_output = gather_tensors(output, device, opt.world_size)
+                    pfunc('TARGETS....')
+                    all_targets = gather_tensors(targets, device, opt.world_size)
 
                     # shape = torch.tensor(output.shape).to(device)#, non_blocking=True)
                     # out_shapes = [torch.zeros_like(shape, device=device) for _ in range(opt.world_size)]
