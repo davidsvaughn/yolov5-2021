@@ -494,7 +494,9 @@ def train(hyp, opt, device, tb_writer=None):
         try:
             model.eval()
             with torch.no_grad():
-                if rank in [-1, 0]: num_img,bs = 0,-1
+                if rank in [-1, 0]:
+                    num_img,bs = 0,-1
+                    t1 = time.time()
                 for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
                     imgs = imgs.to(device, non_blocking=True).float() / 255.0
                     nb, _, height, width = imgs.shape  # batch size, channels, height, width
@@ -503,7 +505,7 @@ def train(hyp, opt, device, tb_writer=None):
                     output = model(imgs, augment=False)[0]
                     output = non_max_suppression(output, multi_label=False, agnostic=True)
                     ####################
-                    
+
                     output = output[0] ## only works with batch_size==1 (for now...)
                     shape = torch.tensor(output.shape).to(device)#, non_blocking=True)
                     out_shapes = [torch.zeros_like(shape, device=device) for _ in range(opt.world_size)]
@@ -552,7 +554,8 @@ def train(hyp, opt, device, tb_writer=None):
 
 
             if rank in [-1, 0]:
-                pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
+                pfunc(f'Test Time: {(time.time()-t1)/60:0.2f}s')
+                # pfunc(f'NUM_TEST_IMG={num_img} BS={bs} opt.world_size={opt.world_size}')
         except Exception as e:
             pfunc('TESTDDP FAILURE:'+ str(e))
 
