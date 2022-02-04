@@ -506,8 +506,8 @@ def train(hyp, opt, device, tb_writer=None):
             padded_output[:my_dim,:] = t
             dist.all_gather(output_list, padded_output)
             if rank in [-1, 0]:
-                padded_output = [x.cpu().numpy() for x in output_list]
-                outputs = [x[:all_dims[j],:] for j,x in enumerate(padded_output)]
+                # padded_output = [x.cpu().numpy() for x in output_list]
+                outputs = [x[:all_dims[j],:] for j,x in enumerate(output_list)]
                 pfunc('TENSORS....')
                 [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
                 return outputs
