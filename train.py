@@ -406,7 +406,7 @@ def train(hyp, opt, device, tb_writer=None):
                         # pfunc('.')
                         if step%10==0:
                             pfunc(f'{step}%')
-                            gpu_stats()
+                            # gpu_stats()
 
             # Warmup
             if ni <= nw:
