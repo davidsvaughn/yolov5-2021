@@ -500,14 +500,31 @@ def train(hyp, opt, device, tb_writer=None):
                     nb, _, height, width = imgs.shape  # batch size, channels, height, width
                     # targets = targets.to(device)
                     # targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
-                    outputs = model(imgs, augment=False)[0]
-                    outputs = non_max_suppression(outputs, multi_label=False, agnostic=True)
+                    output = model(imgs, augment=False)[0]
+                    output = non_max_suppression(output, multi_label=False, agnostic=True)
                     ####################
-                    shape = torch.tensor(outputs[0].shape).to(device)#, non_blocking=True)
+                    
+                    output = output[0] ## only works with batch_size==1 (for now...)
+                    shape = torch.tensor(output.shape).to(device)#, non_blocking=True)
                     out_shapes = [torch.zeros_like(shape, device=device) for _ in range(opt.world_size)]
                     dist.all_gather(out_shapes, shape)
                     if rank in [-1, 0]:
+                        pfunc('SHAPES....')
                         [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
+
+                    my_dim = int(shape[0])
+                    all_dims = [int(x[0]) for x in out_shapes]
+                    max_dim = max(all_dims)
+                    output_list = [torch.zeros([max_dim,6], device=device) for _ in range(opt.world_size)]
+                    padded_output = torch.zeros([max_dim,6], device=device) # dtype=output.dtype
+                    padded_output[:my_dim,:] = output
+                    dist.all_gather(output_list, padded_output)
+                    if rank in [-1, 0]:
+                        padded_output = [x.cpu().numpy() for x in output_list]
+                        outputs = [x[:all_dims[j],:] for j,x in enumerate(padded_output)]
+                        pfunc('TENSORS....')
+                        [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
+
                     #####################
                     # data = { 'outputs':outputs }#, 'rank':rank, 'targets':targets, 'shapes':shapes, 'imgs_shape': imgs.shape }
                     # all_data = [None for _ in range(opt.world_size)]
