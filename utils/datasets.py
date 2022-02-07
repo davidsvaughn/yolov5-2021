@@ -59,7 +59,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                       rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
 
-    lazy_caching = True
+    lazy_caching = False
     cache_efficient_sampling = True
 
     with torch_distributed_zero_first(rank):
@@ -498,12 +498,23 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             #     pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
             # pbar.close()
             ############################################################
-            for i in range(n):
-                if self.cache_efficient_sampling and rank!=-1:
-                    num_replicas = dist.get_world_size()
-                    if i%num_replicas != rank:
-                        continue
-                self.imgs[i], self.img_hw0[i], self.img_hw[i] = load_image(self, i)
+            # for i in range(n):
+            #     if self.cache_efficient_sampling and rank!=-1:
+            #         num_replicas = dist.get_world_size()
+            #         if i%num_replicas != rank:
+            #             continue
+            #     self.imgs[i], self.img_hw0[i], self.img_hw[i] = load_image(self, i)
+            ############################################################
+            gb = 0  # Gigabytes of cached images
+            indexes = self.idx if self.cache_efficient_sampling and rank!=-1 else self.indices
+            results = ThreadPool(8).imap(lambda x: load_image_and_index(*x), zip(repeat(self), indexes))  # 8 threads
+            pbar = tqdm(results, total=len(indexes))
+            for xi in pbar:
+                x,i = xi
+                self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
+                gb += self.imgs[i].nbytes
+                pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
+            pbar.close()
             ############################################################
 
         ## <-- ORIGINAL CODE
@@ -758,6 +769,9 @@ def load_image(self, index):
         return img, (h0, w0), img.shape[:2]  # img, hw_original, hw_resized
     else:
         return self.imgs[index], self.img_hw0[index], self.img_hw[index]  # img, hw_original, hw_resized
+
+def load_image_and_index(self, index):
+    return load_image(self, index), index
 
 ## DISK CACHING -->
 # def load_image(self, i):
