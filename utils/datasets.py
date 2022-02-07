@@ -24,6 +24,7 @@ from utils.general import check_requirements, xyxy2xywh, xywh2xyxy, xywhn2xyxy, 
     resample_segments, clean_str
 from utils.torch_utils import torch_distributed_zero_first
 from utils.sampler import CacheEfficientSampler
+import torch.distributed as dist
 
 # Parameters
 help_url = 'https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
@@ -57,12 +58,19 @@ def exif_size(img):
 def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=False, cache=False, pad=0.0, rect=False,
                       rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
+
+    lazy_caching = False
+    cache_efficient_sampling = True
+
     with torch_distributed_zero_first(rank):
         dataset = LoadImagesAndLabels(path, imgsz, batch_size,
                                       augment=augment,  # augment images
                                       hyp=hyp,  # augmentation hyperparameters
                                       rect=rect,  # rectangular training
                                       cache_images=cache,
+                                      lazy_caching=lazy_caching,
+                                      cache_efficient_sampling=cache_efficient_sampling,
+                                      rank=rank,
                                       single_cls=opt.single_cls,
                                       stride=int(stride),
                                       pad=pad,
@@ -71,8 +79,12 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
 
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
-    # sampler = torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
-    sampler = CacheEfficientSampler(dataset) if rank != -1 else None
+
+    if cache_efficient_sampling:
+        sampler = CacheEfficientSampler(dataset) if rank != -1 else None
+    else:
+        sampler = torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
+
     loader = torch.utils.data.DataLoader if image_weights else InfiniteDataLoader
     # Use torch.utils.data.DataLoader() if dataset.properties will update during training else InfiniteDataLoader()
     dataloader = loader(dataset,
@@ -354,7 +366,8 @@ def img2label_paths(img_paths):
 
 class LoadImagesAndLabels(Dataset):  # for training/testing
     def __init__(self, path, img_size=640, batch_size=16, augment=False, hyp=None, rect=False, image_weights=False,
-                 cache_images=False, single_cls=False, stride=32, pad=0.0, prefix=''):
+                 cache_images=False, lazy_caching=False, cache_efficient_sampling=False, rank=0,
+                 single_cls=False, stride=32, pad=0.0, prefix=''):
         self.img_size = img_size
         self.augment = augment
         self.hyp = hyp
@@ -365,7 +378,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.stride = stride
         self.path = path
 
-        self.lazy_caching = True
+        self.lazy_caching = lazy_caching
+        self.cache_efficient_sampling = cache_efficient_sampling
         self.augment = augment
         self.perturb = augment
         self.crop = 0
@@ -470,6 +484,10 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             pbar = enumerate(results)
             pbar = tqdm(pbar, total=n)
             for i, x in pbar:
+                if self.cache_efficient_sampling and rank!=-1:
+                    num_replicas = dist.get_world_size()
+                    if i%num_replicas != rank:
+                        continue
                 self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
                 gb += self.imgs[i].nbytes
                 pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
