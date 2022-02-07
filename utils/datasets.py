@@ -60,7 +60,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
 
     lazy_caching = False
-    cache_efficient_sampling = True
+    cache_efficient_sampling = False
 
     with torch_distributed_zero_first(rank):
         dataset = LoadImagesAndLabels(path, imgsz, batch_size,
