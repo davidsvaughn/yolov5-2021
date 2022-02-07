@@ -62,20 +62,20 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
     lazy_caching = False
     cache_efficient_sampling = True
 
-    with torch_distributed_zero_first(rank):
-        dataset = LoadImagesAndLabels(path, imgsz, batch_size,
-                                      augment=augment,  # augment images
-                                      hyp=hyp,  # augmentation hyperparameters
-                                      rect=rect,  # rectangular training
-                                      cache_images=cache,
-                                      lazy_caching=lazy_caching,
-                                      cache_efficient_sampling=cache_efficient_sampling,
-                                      rank=rank,
-                                      single_cls=opt.single_cls,
-                                      stride=int(stride),
-                                      pad=pad,
-                                      image_weights=image_weights,
-                                      prefix=prefix)
+    # with torch_distributed_zero_first(rank):
+    dataset = LoadImagesAndLabels(path, imgsz, batch_size,
+                                    augment=augment,  # augment images
+                                    hyp=hyp,  # augmentation hyperparameters
+                                    rect=rect,  # rectangular training
+                                    cache_images=cache,
+                                    lazy_caching=lazy_caching,
+                                    cache_efficient_sampling=cache_efficient_sampling,
+                                    rank=rank,
+                                    single_cls=opt.single_cls,
+                                    stride=int(stride),
+                                    pad=pad,
+                                    image_weights=image_weights,
+                                    prefix=prefix)
 
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
