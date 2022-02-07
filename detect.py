@@ -403,7 +403,6 @@ if __name__ == '__main__':
     parser.add_argument('--hiou-thres', type=float, default=0.2, help='IOU threshold for hotspot-component overlap')
     parser.add_argument('--hide-normal', default=False, action='store_true', help='hide normal components, if hotspot')
     parser.add_argument('--hide-solo', default=False, action='store_true', help='hide solo/unmatched hotspots')
-
     parser.add_argument('--sem-classes', type=str, default=None, help='list semantic classes: --sem-class [0], or --sem-class [0, 2, 3]')
     parser.add_argument('--sem-iou-thres', type=float, default=0.1, help='sematic class IOU threshold for NMS')
     parser.add_argument('--sem-conf-thres', type=float, default=0.1, help='semantic class confidence threshold')
