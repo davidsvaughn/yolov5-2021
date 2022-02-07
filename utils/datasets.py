@@ -378,6 +378,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.stride = stride
         self.path = path
 
+        self.rank = rank
         self.lazy_caching = lazy_caching
         self.cache_efficient_sampling = cache_efficient_sampling
         self.augment = augment
@@ -446,6 +447,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.batch = bi  # batch index of image
         self.n = n
         self.indices = range(n)
+        idx = np.array(self.indices)
+        ws = dist.get_world_size()
+        self.idx = idx[idx % ws == self.rank]
 
         # Rectangular Training
         if self.rect:
@@ -858,7 +862,10 @@ def load_mosaic(self, index):
     labels4, segments4 = [], []
     s = self.img_size
     yc, xc = [int(random.uniform(-x, 2 * s + x)) for x in self.mosaic_border]  # mosaic center x, y
-    indices = [index] + random.choices(self.indices, k=3)  # 3 additional image indices
+
+    # indices = [index] + random.choices(self.indices, k=3)  # 3 additional image indices
+    indices = [index] + random.choices(self.idx, k=3)  # 3 additional image indices
+
     for i, index in enumerate(indices):
         # Load image
         img, (h0,w0), (h,w) = load_image(self, index)
