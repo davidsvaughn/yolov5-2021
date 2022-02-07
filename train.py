@@ -266,6 +266,9 @@ def train(hyp, opt, device, tb_writer=None):
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).to(device)
         logger.info('Using SyncBatchNorm()')
 
+    # if rank in [-1, 0]:
+    pfunc(f'RANK={rank} opt.world_size={opt.world_size} dist.get_rank()={dist.get_rank()} dist.get_world_size()={dist.get_world_size()}')
+
     # Trainloader
     trainloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt, hyp=hyp, augment=True, 
                                             cache=opt.cache_images, 

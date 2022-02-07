@@ -60,7 +60,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
 
     lazy_caching = False
-    cache_efficient_sampling = False
+    cache_efficient_sampling = True
 
     with torch_distributed_zero_first(rank):
         dataset = LoadImagesAndLabels(path, imgsz, batch_size,
@@ -81,7 +81,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
 
     if cache_efficient_sampling:
-        sampler = CacheEfficientSampler(dataset) if rank != -1 else None
+        sampler = CacheEfficientSampler(dataset, num_replicas=world_size, rank=rank) if rank != -1 else None
     else:
         sampler = torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
 
