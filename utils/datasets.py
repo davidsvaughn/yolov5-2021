@@ -59,7 +59,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                       rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
 
-    lazy_caching = False
+    lazy_caching = True
     cache_efficient_sampling = True
 
     with torch_distributed_zero_first(rank):
