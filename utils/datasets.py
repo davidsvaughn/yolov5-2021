@@ -59,8 +59,8 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                       rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
 
-    lazy_caching = True
-    cache_efficient_sampling = False
+    lazy_caching = False
+    cache_efficient_sampling = True
 
     with torch_distributed_zero_first(rank):
         dataset = LoadImagesAndLabels(path, imgsz, batch_size,
@@ -91,7 +91,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                         batch_size=batch_size,
                         num_workers=nw,
                         sampler=sampler,
-                        pin_memory=True,
+                        # pin_memory=True,
                         collate_fn=LoadImagesAndLabels.collate_fn4 if quad else LoadImagesAndLabels.collate_fn)
     return dataloader, dataset
 
@@ -484,10 +484,10 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             pbar = enumerate(results)
             pbar = tqdm(pbar, total=n)
             for i, x in pbar:
-                # if self.cache_efficient_sampling and rank!=-1:
-                #     num_replicas = dist.get_world_size()
-                #     if i%num_replicas != rank:
-                #         continue
+                if self.cache_efficient_sampling and rank!=-1:
+                    num_replicas = dist.get_world_size()
+                    if i%num_replicas != rank:
+                        continue
                 self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
                 gb += self.imgs[i].nbytes
                 pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
