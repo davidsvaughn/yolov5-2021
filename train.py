@@ -296,6 +296,7 @@ def train(hyp, opt, device, tb_writer=None):
         tstloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
                                        hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
                                        world_size=opt.world_size, workers=opt.workers,
+                                       lazy_caching=True,
                                        pad=0.5, prefix=colorstr('val: '))[0]
         new_best_model = False
         if not opt.resume:
