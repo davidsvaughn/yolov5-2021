@@ -485,9 +485,9 @@ def train(hyp, opt, device, tb_writer=None):
 
         # logging.StreamHandler.terminator = "\n"
         if rank in [-1, 0]:
-            pfunc(('\n' + '%10s' * 3) % ('total_min', 'gpu_mem', 'imgs_sec'))
-            pfunc(('%10.2f' + '%10s' + '%10.4g') % ( ((time.time()-t1)/60), mem, imgs_sec))
-            pfunc(f'num_img={num_img} opt.world_size={opt.world_size}')
+            pfunc(('      ' + '%10s' * 3) % ('total_min', 'gpu_mem', 'imgs_sec'))
+            pfunc(('      ' + '%10.2f' + '%10s' + '%10.4g') % ( ((time.time()-t1)/60), mem, imgs_sec))
+            # pfunc(f'num_img={num_img} opt.world_size={opt.world_size}')
 
         # if (epoch+1)%10==0:
         #     gc.collect()
@@ -701,7 +701,7 @@ def train(hyp, opt, device, tb_writer=None):
                 if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
                     ckpt = {'epoch': epoch,
                             'best_fitness': best_fitness,
-                            'training_results': results_file.read_text(),
+                            # 'training_results': results_file.read_text(),
                             'model': deepcopy(de_parallel(model)).half(),
                             'ema': deepcopy(ema.ema).half(),
                             'updates': ema.updates,
@@ -732,6 +732,7 @@ def train(hyp, opt, device, tb_writer=None):
 
         # DDP process 0 or single-GPU
         if rank in [-1, 0] and epoch>4 and epoch%5==0:
+            pfunc(f'OLD TEST FUNCTION!!!!!!')
             # mAP
             ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
             final_epoch = epoch + 1 == epochs
@@ -752,7 +753,7 @@ def train(hyp, opt, device, tb_writer=None):
                                                     wandb_logger=wandb_logger,
                                                     compute_loss=compute_loss,
                                                     is_coco=is_coco)
-                    pfunc(f'Test Time: {(time.time()-t1)/60:0.2f}s')
+                    pfunc(f'Test Time: {(time.time()-t1)/60:0.2f} min')
 
                 # # Write
                 # with open(results_file, 'a') as f:
