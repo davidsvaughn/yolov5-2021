@@ -56,12 +56,13 @@ def exif_size(img):
     return s
 
 def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=False, cache=False, pad=0.0, rect=False,
-                      rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
-    # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
+                        cache_efficient_sampling=False,
+                        lazy_caching=False,
+                        rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
+    # cache_efficient_sampling = True
+    # lazy_caching = False
 
-    lazy_caching = False
-    cache_efficient_sampling = True
-
+    # Make sure only the first process in DDP process the dataset first, and the following others can use the *.cache file (labels)
     with torch_distributed_zero_first(rank):
         dataset = LoadImagesAndLabels(path, imgsz, batch_size,
                                         augment=augment,  # augment images
@@ -91,7 +92,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                         batch_size=batch_size,
                         num_workers=nw,
                         sampler=sampler,
-                        # pin_memory=True,
+                        pin_memory=~cache_efficient_sampling,
                         collate_fn=LoadImagesAndLabels.collate_fn4 if quad else LoadImagesAndLabels.collate_fn)
     return dataloader, dataset
 
@@ -475,77 +476,40 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
             self.batch_shapes = np.ceil(np.array(shapes) * img_size / stride + pad).astype(np.int) * stride
 
-        #############################################################################################
-        ## ORIGINAL IMAGE CACHE CODE ..>
         # Cache images into memory for faster training (WARNING: large datasets may exceed system RAM)
         self.imgs = [None] * n
         self.img_hw0, self.img_hw = [None] * n, [None] * n
         if cache_images and not self.lazy_caching:
+            if not self.cache_efficient_sampling or rank==-1:
+                gb = 0  # Gigabytes of cached images
+                results = ThreadPool(8).imap(lambda x: load_image(*x), zip(repeat(self), range(n)))  # 8 threads
+                # results = map(lambda x: load_image(*x), zip(repeat(self), range(n)))
+                pbar = enumerate(results)
+                pbar = tqdm(pbar, total=n)
+                for i, x in pbar:
+                    self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
+                    gb += self.imgs[i].nbytes
+                    pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
+                pbar.close()
+            else:
+                for i in range(n):
+                    if self.cache_efficient_sampling and rank!=-1:
+                        num_replicas = dist.get_world_size()
+                        if i%num_replicas != rank:
+                            continue
+                    self.imgs[i], self.img_hw0[i], self.img_hw[i] = load_image(self, i)
             ############################################################
             # gb = 0  # Gigabytes of cached images
-            # # self.img_hw0, self.img_hw = [None] * n, [None] * n
-            # results = ThreadPool(8).imap(lambda x: load_image(*x), zip(repeat(self), range(n)))  # 8 threads
-            # # results = map(lambda x: load_image(*x), zip(repeat(self), range(n)))
-            # pbar = enumerate(results)
-            # pbar = tqdm(pbar, total=n)
-            # for i, x in pbar:
-            #     if self.cache_efficient_sampling and rank!=-1:
-            #         num_replicas = dist.get_world_size()
-            #         if i%num_replicas != rank:
-            #             continue
+            # indexes = self.idx if self.cache_efficient_sampling and rank!=-1 else self.indices
+            # results = ThreadPool(8).imap(lambda x: load_image_and_index(*x), zip(repeat(self), indexes))  # 8 threads
+            # pbar = tqdm(results, total=len(indexes))
+            # for xi in pbar:
+            #     x,i = xi
             #     self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
             #     gb += self.imgs[i].nbytes
             #     pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
             # pbar.close()
             ############################################################
-            # for i in range(n):
-            #     if self.cache_efficient_sampling and rank!=-1:
-            #         num_replicas = dist.get_world_size()
-            #         if i%num_replicas != rank:
-            #             continue
-            #     self.imgs[i], self.img_hw0[i], self.img_hw[i] = load_image(self, i)
-            ############################################################
-            gb = 0  # Gigabytes of cached images
-            indexes = self.idx if self.cache_efficient_sampling and rank!=-1 else self.indices
-            results = ThreadPool(8).imap(lambda x: load_image_and_index(*x), zip(repeat(self), indexes))  # 8 threads
-            pbar = tqdm(results, total=len(indexes))
-            for xi in pbar:
-                x,i = xi
-                self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
-                gb += self.imgs[i].nbytes
-                pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
-            pbar.close()
-            ############################################################
-
-        ## <-- ORIGINAL CODE
-        #############################################################################################
-
-        #############################################################################################
-        ## NEW IMAGE CACHE CODE -->
-        ## https://github.com/ultralytics/yolov5/blob/master/utils/datasets.py
-        # NUM_THREADS = min(8, max(1, os.cpu_count() - 1))  # number of YOLOv5 multiprocessing threads
-        # self.imgs, self.img_npy = [None] * n, [None] * n
-        # if cache_images:
-        #     if cache_images == 'disk':
-        #         self.im_cache_dir = Path(Path(self.img_files[0]).parent.as_posix() + '_npy')
-        #         self.img_npy = [self.im_cache_dir / Path(f).with_suffix('.npy').name for f in self.img_files]
-        #         self.im_cache_dir.mkdir(parents=True, exist_ok=True)
-        #     gb = 0  # Gigabytes of cached images
-        #     self.img_hw0, self.img_hw = [None] * n, [None] * n
-        #     results = ThreadPool(NUM_THREADS).imap(lambda x: load_image(*x), zip(repeat(self), range(n)))
-        #     pbar = tqdm(enumerate(results), total=n)
-        #     for i, x in pbar:
-        #         if cache_images == 'disk':
-        #             if not self.img_npy[i].exists():
-        #                 np.save(self.img_npy[i].as_posix(), x[0])
-        #             gb += self.img_npy[i].stat().st_size
-        #         else:
-        #             self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
-        #             gb += self.imgs[i].nbytes
-        #         pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB {cache_images})'
-        #     pbar.close()
-        ## <-- NEW CODE
-        #############################################################################################
 
     def cache_labels(self, path=Path('./labels.cache'), prefix=''):
         # Cache dataset labels, check images and read shapes
@@ -746,7 +710,6 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
 
 # Ancillary functions --------------------------------------------------------------------------------------------------
-## ORIGINAL -->
 def load_image(self, index):
     # loads 1 image from dataset, returns img, original hw, resized hw
     img = self.imgs[index]
@@ -772,29 +735,6 @@ def load_image(self, index):
 
 def load_image_and_index(self, index):
     return load_image(self, index), index
-
-## DISK CACHING -->
-# def load_image(self, i):
-#     # loads 1 image from dataset index 'i', returns im, original hw, resized hw
-#     im = self.imgs[i]
-#     if im is None:  # not cached in ram
-#         npy = self.img_npy[i]
-#         if npy and npy.exists():  # load npy
-#             im = np.load(npy)
-#         else:  # read image
-#             path = self.img_files[i]
-#             im = cv2.imread(path)  # BGR
-#             assert im is not None, f'Image Not Found {path}'
-#         h0, w0 = im.shape[:2]  # orig hw
-#         r = self.img_size / max(h0, w0)  # ratio
-#         # if r != 1:  # if sizes are not equal
-#         if r<1:
-#             im = cv2.resize(im, (int(w0 * r), int(h0 * r)),
-#                             interpolation=cv2.INTER_AREA if r < 1 and not self.augment else cv2.INTER_LINEAR)
-#         return im, (h0, w0), im.shape[:2]  # im, hw_original, hw_resized
-#     else:
-#         return self.imgs[i], self.img_hw0[i], self.img_hw[i]  # im, hw_original, hw_resized
-
 
 def augment_hsv(img, hgain=0.5, sgain=0.5, vgain=0.5):
     r = np.random.uniform(-1, 1, 3) * [hgain, sgain, vgain] + 1  # random gains
