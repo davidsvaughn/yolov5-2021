@@ -297,11 +297,11 @@ def train(hyp, opt, device, tb_writer=None):
     # Process 0
     if rank in [-1, 0]:
         # test_batch_size = batch_size
-        # tstloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
-        #                                hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
-        #                                world_size=opt.world_size, workers=opt.workers,
-        #                                lazy_caching=True,
-        #                                pad=0.5, prefix=colorstr('val: '))[0]
+        final_testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
+                                            hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
+                                            world_size=opt.world_size, workers=opt.workers,
+                                            lazy_caching=True,
+                                            pad=0.5, prefix=colorstr('val: '))[0]
         new_best_model = False
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
@@ -686,9 +686,10 @@ def train(hyp, opt, device, tb_writer=None):
                 pfunc(f'Validation Time: {(time.time()-t1)/60:0.2f} min')
 
                 # Logging
+                results = (mp, mr, mf1, map50, map)#, *(loss.cpu() / len(dataloader)).tolist())
                 tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
                         'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
-                        'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
+                        # 'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
                         'x/lr0', 'x/lr1', 'x/lr2']  # params
                 for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
                     if tb_writer:
@@ -733,7 +734,7 @@ def train(hyp, opt, device, tb_writer=None):
                         new_best_model = False
 
         except Exception as e:
-            pfunc('TEST DDP FAILURE:'+ str(e))
+            pfunc('VALIDATION RUN FAILURE:'+ str(e))
 
         # DDP process 0 or single-GPU
         if rank in [-1, 0] and epoch>400 and epoch%5==0:
@@ -751,7 +752,7 @@ def train(hyp, opt, device, tb_writer=None):
                                                     imgsz=imgsz_test,
                                                     model=ema.ema,
                                                     single_cls=opt.single_cls,
-                                                    dataloader=tstloader,
+                                                    dataloader=final_testloader,
                                                     save_dir=save_dir,
                                                     verbose=nc < 50 and final_epoch,
                                                     plots=plots and final_epoch,
@@ -819,12 +820,13 @@ def train(hyp, opt, device, tb_writer=None):
     # end training
     if rank in [-1, 0]:
         # Plots
-        if plots:
-            plot_results(save_dir=save_dir)  # save as results.png
-            if wandb_logger.wandb:
-                files = ['results.png', 'confusion_matrix.png', *[f'{x}_curve.png' for x in ('F1', 'PR', 'P', 'R')]]
-                wandb_logger.log({"Results": [wandb_logger.wandb.Image(str(save_dir / f), caption=f) for f in files
-                                              if (save_dir / f).exists()]})
+        # if plots:
+        #     plot_results(save_dir=save_dir)  # save as results.png
+        #     if wandb_logger.wandb:
+        #         files = ['results.png', 'confusion_matrix.png', *[f'{x}_curve.png' for x in ('F1', 'PR', 'P', 'R')]]
+        #         wandb_logger.log({"Results": [wandb_logger.wandb.Image(str(save_dir / f), caption=f) for f in files
+        #                                       if (save_dir / f).exists()]})
+        
         # Test best.pt
         pfunc('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
         if opt.data.endswith('coco.yaml') and nc == 80:  # if COCO
@@ -835,7 +837,7 @@ def train(hyp, opt, device, tb_writer=None):
                                         #   conf_thres=0.1,
                                           model=attempt_load(m, device).half(),
                                           single_cls=opt.single_cls,
-                                          dataloader=testloader,
+                                          dataloader=final_testloader,
                                           save_dir=save_dir,
                                           save_json=True,
                                           plots=False,
