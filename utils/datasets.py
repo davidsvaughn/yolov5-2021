@@ -59,8 +59,6 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                         cache_efficient_sampling=False,
                         lazy_caching=False,
                         rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
-    # cache_efficient_sampling = True
-    # lazy_caching = False
 
     # Make sure only the first process in DDP process the dataset first, and the following others can use the *.cache file (labels)
     with torch_distributed_zero_first(rank):
@@ -480,35 +478,36 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.imgs = [None] * n
         self.img_hw0, self.img_hw = [None] * n, [None] * n
         if cache_images and not self.lazy_caching:
-            if not self.cache_efficient_sampling or rank==-1:
-                gb = 0  # Gigabytes of cached images
-                results = ThreadPool(8).imap(lambda x: load_image(*x), zip(repeat(self), range(n)))  # 8 threads
-                # results = map(lambda x: load_image(*x), zip(repeat(self), range(n)))
-                pbar = enumerate(results)
-                pbar = tqdm(pbar, total=n)
-                for i, x in pbar:
-                    self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
-                    gb += self.imgs[i].nbytes
-                    pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
-                pbar.close()
-            else:
-                for i in range(n):
-                    if self.cache_efficient_sampling and rank!=-1:
-                        num_replicas = dist.get_world_size()
-                        if i%num_replicas != rank:
-                            continue
-                    self.imgs[i], self.img_hw0[i], self.img_hw[i] = load_image(self, i)
             ############################################################
-            # gb = 0  # Gigabytes of cached images
-            # indexes = self.idx if self.cache_efficient_sampling and rank!=-1 else self.indices
-            # results = ThreadPool(8).imap(lambda x: load_image_and_index(*x), zip(repeat(self), indexes))  # 8 threads
-            # pbar = tqdm(results, total=len(indexes))
-            # for xi in pbar:
-            #     x,i = xi
-            #     self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
-            #     gb += self.imgs[i].nbytes
-            #     pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
-            # pbar.close()
+            # if not self.cache_efficient_sampling or rank==-1:
+            #     gb = 0  # Gigabytes of cached images
+            #     results = ThreadPool(8).imap(lambda x: load_image(*x), zip(repeat(self), range(n)))  # 8 threads
+            #     # results = map(lambda x: load_image(*x), zip(repeat(self), range(n)))
+            #     pbar = enumerate(results)
+            #     pbar = tqdm(pbar, total=n)
+            #     for i, x in pbar:
+            #         self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
+            #         gb += self.imgs[i].nbytes
+            #         pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
+            #     pbar.close()
+            # else:
+            #     for i in range(n):
+            #         if self.cache_efficient_sampling and rank!=-1:
+            #             num_replicas = dist.get_world_size()
+            #             if i%num_replicas != rank:
+            #                 continue
+            #         self.imgs[i], self.img_hw0[i], self.img_hw[i] = load_image(self, i)
+            ############################################################
+            gb = 0  # Gigabytes of cached images
+            indexes = self.idx if self.cache_efficient_sampling and rank!=-1 else self.indices
+            results = ThreadPool(8).imap(lambda x: load_image_and_index(*x), zip(repeat(self), indexes))  # 8 threads
+            pbar = tqdm(results, total=len(indexes))
+            for xi in pbar:
+                x,i = xi
+                self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
+                gb += self.imgs[i].nbytes
+                pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
+            pbar.close()
             ############################################################
 
     def cache_labels(self, path=Path('./labels.cache'), prefix=''):
