@@ -69,7 +69,7 @@ def gpu_stats():
         handle = nvmlDeviceGetHandleByIndex(i)
         mem = nvmlDeviceGetMemoryInfo(handle)
         pfunc(f'GPU:{i} Total:{round(float(mem.total)/1000000000, 2)}, Used: {round(float(mem.used)/1000000000, 2)}')
-        if i>1: break
+        if i>0: break
 
 def upload_model(opt):
     global s3_client, first_upload
@@ -418,7 +418,7 @@ def train(hyp, opt, device, tb_writer=None):
                         # pfunc('.')
                         if step%10==0:
                             pfunc(f'      {step}%')
-                            # gpu_stats()
+                            gpu_stats()
 
             # Warmup
             if ni <= nw:
