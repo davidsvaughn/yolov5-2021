@@ -3,10 +3,8 @@ import torch
 from torch.utils.data import Sampler
 import torch.distributed as dist
 
-
 class CacheEfficientSampler(Sampler):
-
-    def __init__(self, dataset, num_replicas=None, rank=None, shuffle=True, seed=0):
+    def __init__(self, dataset, num_replicas=None, rank=None, shuffle=True, seed=0, drop_last=True):
         if num_replicas is None:
             if not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
@@ -19,9 +17,10 @@ class CacheEfficientSampler(Sampler):
         self.num_replicas = num_replicas
         self.rank = rank
         self.epoch = 0
+        self.drop_last = drop_last
         # If the dataset length is evenly divisible by # of replicas, then there
         # is no need to drop any data, since the dataset will be split equally.
-        if len(self.dataset) % self.num_replicas != 0:  # type: ignore[arg-type]
+        if drop_last and len(self.dataset) % self.num_replicas != 0:  # type: ignore[arg-type]
             # Split to nearest available length that is evenly divisible.
             # This is to ensure each rank receives the same amount of data when
             # using this Sampler.
@@ -45,10 +44,19 @@ class CacheEfficientSampler(Sampler):
         ## force each rank to sample the same subset of data every time
         ## for space efficient caching !!!!
         x = x[x%self.num_replicas==self.rank]
-        x = x[:self.num_samples]
+        # x = x[:self.num_samples]
 
-        indices = x.tolist()
-        return iter(indices)
+        idx = x.tolist()
+        if self.drop_last:
+            idx = idx[:self.num_samples]
+        else:
+            padding_size = self.num_samples - len(idx)
+            if padding_size <= len(idx):
+                idx += idx[:padding_size]
+            else:
+                idx += (idx * math.ceil(padding_size / len(idx)))[:padding_size]
+
+        return iter(idx)
 
     def __len__(self):
         return self.num_samples

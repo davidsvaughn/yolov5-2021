@@ -290,18 +290,18 @@ def train(hyp, opt, device, tb_writer=None):
     test_batch_size = 1 ## so test_batch_size-per-GPU = 1 (needed for DDP validation)
     testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
                                     hyp=hyp, cache=opt.cache_images and not opt.notest,
-                                    cache_efficient_sampling=True,
+                                    cache_efficient_sampling=True, drop_last=False,
                                     rect=True, rank=rank,
                                     world_size=opt.world_size, workers=opt.workers,
                                     pad=0.5, prefix=colorstr('val: '))[0]
     # Process 0
     if rank in [-1, 0]:
         # test_batch_size = batch_size
-        tstloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
-                                       hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
-                                       world_size=opt.world_size, workers=opt.workers,
-                                       lazy_caching=True,
-                                       pad=0.5, prefix=colorstr('val: '))[0]
+        # tstloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
+        #                                hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
+        #                                world_size=opt.world_size, workers=opt.workers,
+        #                                lazy_caching=True,
+        #                                pad=0.5, prefix=colorstr('val: '))[0]
         new_best_model = False
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
@@ -418,7 +418,7 @@ def train(hyp, opt, device, tb_writer=None):
                         # pfunc('.')
                         if step%10==0:
                             pfunc(f'      {step}%')
-                            gpu_stats()
+                            # gpu_stats()
 
             # Warmup
             if ni <= nw:

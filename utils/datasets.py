@@ -57,6 +57,7 @@ def exif_size(img):
 
 def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=False, cache=False, pad=0.0, rect=False,
                         cache_efficient_sampling=False,
+                        drop_last=True,
                         lazy_caching=False,
                         rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
 
@@ -80,7 +81,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
 
     if cache_efficient_sampling:
-        sampler = CacheEfficientSampler(dataset, num_replicas=world_size, rank=rank) if rank != -1 else None
+        sampler = CacheEfficientSampler(dataset, num_replicas=world_size, rank=rank, drop_last=drop_last) if rank != -1 else None
     else:
         sampler = torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
 
