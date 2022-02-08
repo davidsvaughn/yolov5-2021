@@ -418,7 +418,7 @@ def train(hyp, opt, device, tb_writer=None):
                         # pfunc('.')
                         if step%10==0:
                             pfunc(f'      {step}%')
-                            gpu_stats()
+                            # gpu_stats()
 
             # Warmup
             if ni <= nw:
@@ -737,7 +737,7 @@ def train(hyp, opt, device, tb_writer=None):
             pfunc('VALIDATION RUN FAILURE:'+ str(e))
 
         # DDP process 0 or single-GPU
-        if rank in [-1, 0] and epoch>400 and epoch%5==0:
+        if rank in [-1, 0] and epoch>4 and epoch%5==0:
             pfunc(f'OLD TEST FUNCTION!!!!!!')
             # mAP
             ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
