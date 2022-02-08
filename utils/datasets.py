@@ -479,26 +479,6 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.imgs = [None] * n
         self.img_hw0, self.img_hw = [None] * n, [None] * n
         if cache_images and not self.lazy_caching:
-            ############################################################
-            # if not self.cache_efficient_sampling or rank==-1:
-            #     gb = 0  # Gigabytes of cached images
-            #     results = ThreadPool(8).imap(lambda x: load_image(*x), zip(repeat(self), range(n)))  # 8 threads
-            #     # results = map(lambda x: load_image(*x), zip(repeat(self), range(n)))
-            #     pbar = enumerate(results)
-            #     pbar = tqdm(pbar, total=n)
-            #     for i, x in pbar:
-            #         self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
-            #         gb += self.imgs[i].nbytes
-            #         pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
-            #     pbar.close()
-            # else:
-            #     for i in range(n):
-            #         if self.cache_efficient_sampling and rank!=-1:
-            #             num_replicas = dist.get_world_size()
-            #             if i%num_replicas != rank:
-            #                 continue
-            #         self.imgs[i], self.img_hw0[i], self.img_hw[i] = load_image(self, i)
-            ############################################################
             gb = 0  # Gigabytes of cached images
             indexes = self.idx if self.cache_efficient_sampling and rank!=-1 else self.indices
             results = ThreadPool(8).imap(lambda x: load_image_and_index(*x), zip(repeat(self), indexes))  # 8 threads
@@ -509,7 +489,6 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 gb += self.imgs[i].nbytes
                 pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
             pbar.close()
-            ############################################################
 
     def cache_labels(self, path=Path('./labels.cache'), prefix=''):
         # Cache dataset labels, check images and read shapes

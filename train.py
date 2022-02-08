@@ -300,7 +300,7 @@ def train(hyp, opt, device, tb_writer=None):
         final_testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
                                             hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
                                             world_size=opt.world_size, workers=opt.workers,
-                                            lazy_caching=True,
+                                            # lazy_caching=True,
                                             pad=0.5, prefix=colorstr('val: '))[0]
         new_best_model = False
         if not opt.resume:
@@ -474,7 +474,7 @@ def train(hyp, opt, device, tb_writer=None):
                     pbar.set_description(s)
 
                 # Plot
-                if plots and ni < 3:
+                if plots and ni < 5:
                     f = save_dir / f'train_batch{ni}.jpg'  # filename
                     Thread(target=plot_images, args=(imgs, targets, paths, f), daemon=True).start()
                     # if tb_writer:
