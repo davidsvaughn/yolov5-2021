@@ -293,10 +293,10 @@ def train(hyp, opt, device, tb_writer=None):
     # Process 0
     if rank in [-1, 0]:
         # test_batch_size = batch_size
-        # testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
-        #                                hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
-        #                                world_size=opt.world_size, workers=opt.workers,
-        #                                pad=0.5, prefix=colorstr('val: '))[0]
+        tstloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
+                                       hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
+                                       world_size=opt.world_size, workers=opt.workers,
+                                       pad=0.5, prefix=colorstr('val: '))[0]
         new_best_model = False
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
@@ -485,8 +485,8 @@ def train(hyp, opt, device, tb_writer=None):
 
         # logging.StreamHandler.terminator = "\n"
         if rank in [-1, 0]:
-            pfunc(('      ' + '%10s' * 3) % ('total_min', 'gpu_mem', 'imgs_sec'))
-            pfunc(('      ' + '%10.2f' + '%10s' + '%10.4g') % ( ((time.time()-t1)/60), mem, imgs_sec))
+            pfunc(('     ' + '%10s' * 3) % ('total_min', 'gpu_mem', 'imgs_sec'))
+            pfunc(('     ' + '%10.2f' + '%10s' + '%10.4g') % ( ((time.time()-t1)/60), mem, imgs_sec))
             # pfunc(f'num_img={num_img} opt.world_size={opt.world_size}')
 
         # if (epoch+1)%10==0:
@@ -746,7 +746,7 @@ def train(hyp, opt, device, tb_writer=None):
                                                     imgsz=imgsz_test,
                                                     model=ema.ema,
                                                     single_cls=opt.single_cls,
-                                                    dataloader=testloader,
+                                                    dataloader=tstloader,
                                                     save_dir=save_dir,
                                                     verbose=nc < 50 and final_epoch,
                                                     plots=plots and final_epoch,
