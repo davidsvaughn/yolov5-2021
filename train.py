@@ -542,8 +542,9 @@ def train(hyp, opt, device, tb_writer=None):
                 #     testmod=ema.ema
                 # else:
                 #     testmod = model
-                testmod = deepcopy(de_parallel(model))
-                testmod.eval()
+                # testmod = deepcopy(de_parallel(model))
+                # testmod.eval()
+                model.eval()
                 final_epoch = epoch + 1 == epochs
                 with torch.no_grad():
                     if rank in [-1, 0]:
@@ -558,7 +559,7 @@ def train(hyp, opt, device, tb_writer=None):
                         targets = targets.to(device)
                         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
                         ## inference step ----------------------
-                        output = testmod(imgs, augment=False)[0]
+                        output = model.module(imgs, augment=False)[0]
                         ## -------------------------------------
                         output = non_max_suppression(output, multi_label=False, agnostic=True)
                         output = output[0] ## only works with batch_size==1 (for now...)
