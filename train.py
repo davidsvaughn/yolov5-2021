@@ -566,14 +566,22 @@ def train(hyp, opt, device, tb_writer=None):
                 # Now, let’s create a toy module, wrap it with DDP, and feed it with some dummy input data. 
                 # Please note, as DDP broadcasts model states from rank 0 process to all other processes in the DDP constructor, 
                 # you don’t need to worry about different DDP processes start from different model parameter initial values.
-                half = False
+                # half = False
                 testmod = deepcopy(de_parallel(model)) # if rank==0 else None
-                if rank>0:
-                    const_init(testmod)
-
+                # if rank>0: const_init(testmod)
                 testmod = DDP(testmod, device_ids=[rank], #output_device=opt.local_rank,
                             # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
                             find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.module.modules()))
+                
+                CHECKPOINT_PATH = 'chkpt.pt'
+                if rank == 0:
+                    torch.save(testmod.state_dict(), CHECKPOINT_PATH)
+                # Use a barrier() to make sure that process 1 loads the model after proces 0 saves it.
+                dist.barrier()
+                # configure map_location properly
+                map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
+                testmod.load_state_dict(
+                    torch.load(CHECKPOINT_PATH, map_location=map_location))
 
                 #################################
 
@@ -785,18 +793,16 @@ def train(hyp, opt, device, tb_writer=None):
                 if not opt.notest or final_epoch:  # Calculate mAP
                     t1 = time.time()
                     wandb_logger.current_epoch = epoch + 1
-                    
-                    with torch.no_grad():
-                        results, maps, times = test.test(data_dict, batch_size=test_batch_size, imgsz=imgsz_test, single_cls=opt.single_cls, 
-                                                        dataloader=orig_testloader, save_dir=save_dir, verbose=nc < 50 and final_epoch,
-                                                        plots=plots and final_epoch, wandb_logger=wandb_logger, compute_loss=compute_loss, DEBUG=DEBUG,
+                    results, maps, times = test.test(data_dict, batch_size=test_batch_size, imgsz=imgsz_test, single_cls=opt.single_cls, 
+                                                    dataloader=orig_testloader, save_dir=save_dir, verbose=nc < 50 and final_epoch,
+                                                    plots=plots and final_epoch, wandb_logger=wandb_logger, compute_loss=compute_loss, DEBUG=DEBUG,
 
-                                                        # model=ema.ema,
-                                                        model=model,
+                                                    # model=ema.ema,
+                                                    model=model,
 
-                                                        # half_precision=True,### ???????????
-                                                        half_precision=False,### ???????????
-                                                        )
+                                                    # half_precision=True,### ???????????
+                                                    half_precision=False,### ???????????
+                                                    )
 
                     pfunc(f'Old Validation Time: {(time.time()-t1)/60:0.2f} min')
 
