@@ -553,10 +553,10 @@ def train(hyp, opt, device, tb_writer=None):
                 # Now, let’s create a toy module, wrap it with DDP, and feed it with some dummy input data. 
                 # Please note, as DDP broadcasts model states from rank 0 process to all other processes in the DDP constructor, 
                 # you don’t need to worry about different DDP processes start from different model parameter initial values.
-                testmod = deepcopy(de_parallel(model)) #if rank==0 else None
+                testmod = deepcopy(de_parallel(model)) if rank==0 else None
                 testmod = DDP(testmod, device_ids=[rank], #output_device=opt.local_rank,
                             # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
-                            find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in testmod.modules()))
+                            find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.modules()))
 
                 #################################
                 final_epoch = epoch + 1 == epochs
