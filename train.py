@@ -667,7 +667,9 @@ def train(hyp, opt, device, tb_writer=None):
                                                     break
 
                             # Append statistics (correct, conf, pcls, tcls)
-                            stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))              
+                            stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
+
+                dist.barrier()           
 
                 if rank in [-1, 0]:
                     # Compute statistics
