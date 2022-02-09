@@ -553,10 +553,11 @@ def train(hyp, opt, device, tb_writer=None):
                 # Now, let’s create a toy module, wrap it with DDP, and feed it with some dummy input data. 
                 # Please note, as DDP broadcasts model states from rank 0 process to all other processes in the DDP constructor, 
                 # you don’t need to worry about different DDP processes start from different model parameter initial values.
-                testmod = deepcopy(de_parallel(model)) if rank==0 else None
+                half = False
+                testmod = deepcopy(de_parallel(model)) # if rank==0 else None
                 testmod = DDP(testmod, device_ids=[rank], #output_device=opt.local_rank,
                             # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
-                            find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.modules()))
+                            find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.module.modules()))
 
                 #################################
                 final_epoch = epoch + 1 == epochs
@@ -569,7 +570,10 @@ def train(hyp, opt, device, tb_writer=None):
 
                 # with torch.no_grad():
                 for batch_i, (imgs, targets, paths, shapes) in enumerate(ddp_testloader):
-                    imgs = imgs.to(device, non_blocking=True).float() / 255.0
+                    # imgs = imgs.to(device, non_blocking=True).float() / 255.0
+                    imgs = imgs.to(device, non_blocking=True)
+                    imgs = imgs.half() if half else imgs.float()  # uint8 to fp16/32
+                    imgs /= 255.0  # 0 - 255 to 0.0 - 1.0
                     nb, _, height, width = imgs.shape  # batch size, channels, height, width
                     targets = targets.to(device)
                     targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
