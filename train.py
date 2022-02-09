@@ -59,7 +59,7 @@ pfunc = logger.info
 
 TQDM = False
 
-DDP_VAL = True
+DDP_VAL = False
 OLD_VAL = 5
 DEBUG = False
 
