@@ -569,6 +569,7 @@ def train(hyp, opt, device, tb_writer=None):
                     niou = iouv.numel()
 
                 # with torch.no_grad():
+                testmod.eval()
                 for batch_i, (imgs, targets, paths, shapes) in enumerate(ddp_testloader):
                     # imgs = imgs.to(device, non_blocking=True).float() / 255.0
                     imgs = imgs.to(device, non_blocking=True)
