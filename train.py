@@ -544,7 +544,15 @@ def train(hyp, opt, device, tb_writer=None):
                 #     testmod = model
                 # testmod = deepcopy(de_parallel(model))
                 # testmod.eval()
-                model.eval()
+                # model.eval()
+
+                # if cuda and rank != -1:
+                testmod = deepcopy(de_parallel(model))
+                testmod = DDP(testmod, device_ids=[opt.local_rank], output_device=opt.local_rank,
+                            # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
+                            find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in testmod.modules()))
+
+                #################################
                 final_epoch = epoch + 1 == epochs
                 if rank in [-1, 0]:
                     t1 = time.time()
@@ -560,7 +568,7 @@ def train(hyp, opt, device, tb_writer=None):
                     targets = targets.to(device)
                     targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
                     ## inference step ----------------------
-                    output = model.module(imgs, augment=False)[0]
+                    output = testmod(imgs, augment=False)[0]
                     ## -------------------------------------
                     output = non_max_suppression(output, multi_label=False, agnostic=True)
                     output = output[0] ## only works with batch_size==1 (for now...)
