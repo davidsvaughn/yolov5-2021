@@ -59,6 +59,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                         cache_efficient_sampling=False,
                         drop_last=True,
                         lazy_caching=False,
+                        shuffle=True,
                         rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
 
     # Make sure only the first process in DDP process the dataset first, and the following others can use the *.cache file (labels)
@@ -81,9 +82,9 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
 
     if cache_efficient_sampling:
-        sampler = CacheEfficientSampler(dataset, num_replicas=world_size, rank=rank, drop_last=drop_last) if rank != -1 else None
+        sampler = CacheEfficientSampler(dataset, num_replicas=world_size, rank=rank, drop_last=drop_last, shuffle=shuffle) if rank != -1 else None
     else:
-        sampler = torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
+        sampler = torch.utils.data.distributed.DistributedSampler(dataset, shuffle=shuffle) if rank != -1 else None
 
     loader = torch.utils.data.DataLoader if image_weights else InfiniteDataLoader
     # Use torch.utils.data.DataLoader() if dataset.properties will update during training else InfiniteDataLoader()

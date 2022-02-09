@@ -289,7 +289,7 @@ def train(hyp, opt, device, tb_writer=None):
     test_batch_size = 1 ## so test_batch_size-per-GPU = 1 (needed for DDP validation)
     testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
                                     hyp=hyp, cache=opt.cache_images and not opt.notest,
-                                    cache_efficient_sampling=True, drop_last=False,
+                                    cache_efficient_sampling=True, drop_last=False, shuffle=False,
                                     rect=True, rank=rank,
                                     world_size=opt.world_size, workers=opt.workers,
                                     pad=0.5, prefix=colorstr('val: '))[0]
@@ -574,6 +574,14 @@ def train(hyp, opt, device, tb_writer=None):
                         dist.all_gather(all_shapes, t)
 
                         if rank in [-1, 0]:
+                            ## debugging.......
+                            if batch_i==0:
+                                print('DDP OUTPUT[0] -----------------')
+                                print(all_output[0])
+                                print('DDP TARGETS[0] -----------------')
+                                print(all_targets[0])
+
+                            ###################
                             output = all_output
                             for j,targets in enumerate(all_targets):
                                 targets[:,0] = j ## restore indices
@@ -827,7 +835,7 @@ def train(hyp, opt, device, tb_writer=None):
             results, _, _ = test.test(data_dict,
                                         batch_size=test_batch_size,
                                         imgsz=imgsz_test,
-                                        model=attempt_load(m, device).half(),
+                                        model=attempt_load(m, device),#.half(),
                                         single_cls=opt.single_cls,
                                         dataloader=final_testloader,
                                         save_dir=save_dir,

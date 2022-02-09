@@ -49,7 +49,7 @@ def test(data,
          plots=True,
          wandb_logger=None,
          compute_loss=None,
-         half_precision=False, ## dsv
+         half_precision=True, ## dsv
          is_coco=False,
          max_by_class=True,
          opt=None):
@@ -161,6 +161,15 @@ def test(data,
         t = time_synchronized()
         output = non_max_suppression(inf_out, labels=lb, multi_label=False, agnostic=True)#, conf_thres=conf_thres, iou_thres=iou_thres)
         t1 += time_synchronized() - t
+
+        ## debugging.......
+        if batch_i==0:
+            print('OLD OUTPUT[0] -----------------')
+            print(output[0])
+            print('OLD TARGETS[0] -----------------')
+            print(targets)
+
+         ###################
 
         # pfunc(f'test_batch_size=={len(output)}')
         # Statistics per image
