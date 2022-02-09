@@ -164,10 +164,12 @@ def test(data,
 
         ## debugging.......
         if batch_i==0:
+            print('INF OUT[0] -----------------')
+            print(inf_out[0])
             print('OLD OUTPUT[0] -----------------')
             print(output[0])
-            print('OLD TARGETS[0] -----------------')
-            print(targets)
+            # print('OLD TARGETS[0] -----------------')
+            # print(targets)
 
          ###################
 
