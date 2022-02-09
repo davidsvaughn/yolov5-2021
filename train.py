@@ -503,7 +503,7 @@ def train(hyp, opt, device, tb_writer=None):
         scheduler.step()
 
 
-        DDP_VAL = False
+        DDP_VAL = True
         OLD_VAL = 5
 
         ################################################################
@@ -555,7 +555,10 @@ def train(hyp, opt, device, tb_writer=None):
                         targets = targets.to(device)
                         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
                         output = testmod(imgs, augment=False)[0]
-                        output = non_max_suppression(output, multi_label=False, agnostic=True)
+
+                        ### do NMS after....
+                        # output = non_max_suppression(output, multi_label=False, agnostic=True)
+
                         output = output[0] ## only works with batch_size==1 (for now...)
                         ####################
 
@@ -600,6 +603,9 @@ def train(hyp, opt, device, tb_writer=None):
                             ## METRICS
                             idx = []
                             for si, pred in enumerate(output):
+
+                                pred = non_max_suppression(pred[None,:], multi_label=False, agnostic=True)[0]
+
                                 labels = targets[targets[:, 0] == si, 1:]
                                 nl = len(labels)
                                 tcls = labels[:, 0].tolist() if nl else []  # target class
