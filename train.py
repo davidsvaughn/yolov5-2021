@@ -509,7 +509,7 @@ def train(hyp, opt, device, tb_writer=None):
         ################################################################
         ## DDP VALIDATION....
         if DDP_VAL:
-            def gather_tensors(t, device, world_size, debug=None, batch_i=-1):
+            def gather_tensors(t, device, world_size, dim=6, debug=None, batch_i=-1):
                 shape = torch.tensor(t.shape).to(device)
                 out_shapes = [torch.zeros_like(shape, device=device) for _ in range(world_size)]
                 dist.all_gather(out_shapes, shape)
@@ -521,8 +521,8 @@ def train(hyp, opt, device, tb_writer=None):
                 my_dim = int(shape[0])
                 all_dims = [int(x[0]) for x in out_shapes]
                 max_dim = max(all_dims)
-                output_list = [torch.zeros([max_dim,6], device=device) for _ in range(world_size)]
-                padded_output = torch.zeros([max_dim,6], device=device)
+                output_list = [torch.zeros([max_dim,dim], device=device) for _ in range(world_size)]
+                padded_output = torch.zeros([max_dim,dim], device=device)
                 padded_output[:my_dim,:] = t
                 dist.all_gather(output_list, padded_output)
                 if rank in [-1, 0]:
@@ -562,7 +562,7 @@ def train(hyp, opt, device, tb_writer=None):
                         output = output[0] ## only works with batch_size==1 (for now...)
                         ####################
 
-                        all_output = gather_tensors(output, device, opt.world_size)#, debug='OUTPUT', batch_i=batch_i)
+                        all_output = gather_tensors(output, device, opt.world_size, dim=31)#, debug='OUTPUT', batch_i=batch_i)
                         all_targets = gather_tensors(targets, device, opt.world_size)#, debug='TARGETS', batch_i=batch_i)
 
                         ## imgs[0].shape
@@ -604,7 +604,6 @@ def train(hyp, opt, device, tb_writer=None):
                             idx = []
                             for si, pred in enumerate(output):
 
-                                print(pred.shape)
                                 pred = non_max_suppression(pred[None,:], multi_label=False, agnostic=True)[0]
 
                                 labels = targets[targets[:, 0] == si, 1:]
