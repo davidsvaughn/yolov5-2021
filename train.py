@@ -786,6 +786,10 @@ def train(hyp, opt, device, tb_writer=None):
 
         # DDP process 0 or single-GPU
         if (rank in [-1,0] and not DDP_VAL) or (rank in [-1,0] and epoch>0 and (epoch+1)%OLD_VAL==0):
+
+            if not (epoch>0 and (epoch+1)%OLD_VAL==0):
+                continue
+
             pfunc(f'OLD VALIDATION !!!')
             # mAP
             ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
