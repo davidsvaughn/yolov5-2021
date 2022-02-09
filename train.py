@@ -59,7 +59,7 @@ pfunc = logger.info
 
 TQDM = False
 
-DDP_VAL = False
+DDP_VAL = True
 OLD_VAL = 5
 DEBUG = False
 
@@ -510,6 +510,10 @@ def train(hyp, opt, device, tb_writer=None):
         ################################################################
         ## DDP VALIDATION....
         if DDP_VAL:
+
+            if not (epoch>0 and (epoch+1)%OLD_VAL==0):
+                continue
+            
             # @torch.no_grad()
             def gather_tensors(t, device, world_size, dim=6, debug=None, batch_i=-1):
                 shape = torch.tensor(t.shape).to(device)
