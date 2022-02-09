@@ -59,6 +59,9 @@ pfunc = logger.info
 
 TQDM = False
 
+DDP_VAL = False
+OLD_VAL = 5
+
 def gpu_stats():
     n = nvmlDeviceGetCount()
     pfunc(f'NVIDIA-SMI: {n} GPUs')
@@ -503,12 +506,10 @@ def train(hyp, opt, device, tb_writer=None):
         scheduler.step()
 
 
-        DDP_VAL = False
-        OLD_VAL = 5
-
         ################################################################
         ## DDP VALIDATION....
         if DDP_VAL:
+            # @torch.no_grad()
             def gather_tensors(t, device, world_size, dim=6, debug=None, batch_i=-1):
                 shape = torch.tensor(t.shape).to(device)
                 out_shapes = [torch.zeros_like(shape, device=device) for _ in range(world_size)]
@@ -750,18 +751,16 @@ def train(hyp, opt, device, tb_writer=None):
                 if not opt.notest or final_epoch:  # Calculate mAP
                     t1 = time.time()
                     wandb_logger.current_epoch = epoch + 1
-                    results, maps, times = test.test(data_dict,
-                                                    batch_size=test_batch_size,
-                                                    imgsz=imgsz_test,
-                                                    model=ema.ema,
-                                                    single_cls=opt.single_cls,
-                                                    dataloader=final_testloader,
-                                                    save_dir=save_dir,
-                                                    verbose=nc < 50 and final_epoch,
-                                                    plots=plots and final_epoch,
-                                                    wandb_logger=wandb_logger,
-                                                    compute_loss=compute_loss,
-                                                    half_precision=False) ##################
+                    results, maps, times = test.test(data_dict, batch_size=test_batch_size, imgsz=imgsz_test, single_cls=opt.single_cls, 
+                                                    dataloader=final_testloader, save_dir=save_dir, verbose=nc < 50 and final_epoch,
+                                                    plots=plots and final_epoch, wandb_logger=wandb_logger, compute_loss=compute_loss,
+                                                    
+                                                    # model=ema.ema,
+                                                    model=model,
+
+                                                    # half_precision=True,### ???????????
+                                                    half_precision=False,### ???????????
+                                                    ) 
                     pfunc(f'Old Validation Time: {(time.time()-t1)/60:0.2f} min')
 
                 if not DDP_VAL:
