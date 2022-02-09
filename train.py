@@ -59,7 +59,7 @@ pfunc = logger.info
 
 TQDM = False
 
-DDP_VAL = True
+DDP_VAL = False
 OLD_VAL = 5
 DEBUG = False
 
@@ -570,13 +570,13 @@ def train(hyp, opt, device, tb_writer=None):
                 testmod = deepcopy(de_parallel(model)) # if rank==0 else None
                 if rank>0:
                     const_init(testmod)
+
                 testmod = DDP(testmod, device_ids=[rank], #output_device=opt.local_rank,
                             # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
                             find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.module.modules()))
 
                 #################################
 
-                # with torch.no_grad():
                 testmod.eval()
                 with torch.no_grad():
                     for batch_i, (imgs, targets, paths, shapes) in enumerate(ddp_testloader):
@@ -686,9 +686,7 @@ def train(hyp, opt, device, tb_writer=None):
                                                         break
 
                                 # Append statistics (correct, conf, pcls, tcls)
-                                stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
-
-                # dist.barrier()           
+                                stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))       
 
                 if rank in [-1, 0]:
                     # Compute statistics
@@ -787,16 +785,19 @@ def train(hyp, opt, device, tb_writer=None):
                 if not opt.notest or final_epoch:  # Calculate mAP
                     t1 = time.time()
                     wandb_logger.current_epoch = epoch + 1
-                    results, maps, times = test.test(data_dict, batch_size=test_batch_size, imgsz=imgsz_test, single_cls=opt.single_cls, 
-                                                    dataloader=orig_testloader, save_dir=save_dir, verbose=nc < 50 and final_epoch,
-                                                    plots=plots and final_epoch, wandb_logger=wandb_logger, compute_loss=compute_loss, DEBUG=DEBUG,
+                    
+                    with torch.no_grad():
+                        results, maps, times = test.test(data_dict, batch_size=test_batch_size, imgsz=imgsz_test, single_cls=opt.single_cls, 
+                                                        dataloader=orig_testloader, save_dir=save_dir, verbose=nc < 50 and final_epoch,
+                                                        plots=plots and final_epoch, wandb_logger=wandb_logger, compute_loss=compute_loss, DEBUG=DEBUG,
 
-                                                    # model=ema.ema,
-                                                    model=model,
+                                                        # model=ema.ema,
+                                                        model=model,
 
-                                                    # half_precision=True,### ???????????
-                                                    half_precision=False,### ???????????
-                                                    ) 
+                                                        # half_precision=True,### ???????????
+                                                        half_precision=False,### ???????????
+                                                        )
+
                     pfunc(f'Old Validation Time: {(time.time()-t1)/60:0.2f} min')
 
                 if not DDP_VAL:
