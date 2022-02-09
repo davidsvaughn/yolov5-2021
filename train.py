@@ -566,7 +566,7 @@ def train(hyp, opt, device, tb_writer=None):
                 # Now, let’s create a toy module, wrap it with DDP, and feed it with some dummy input data. 
                 # Please note, as DDP broadcasts model states from rank 0 process to all other processes in the DDP constructor, 
                 # you don’t need to worry about different DDP processes start from different model parameter initial values.
-                # half = False
+                half = False
                 testmod = deepcopy(de_parallel(model)) # if rank==0 else None
                 # if rank>0: const_init(testmod)
                 testmod = DDP(testmod, device_ids=[rank], #output_device=opt.local_rank,
@@ -576,6 +576,7 @@ def train(hyp, opt, device, tb_writer=None):
                 CHECKPOINT_PATH = 'chkpt.pt'
                 if rank == 0:
                     torch.save(testmod.state_dict(), CHECKPOINT_PATH)
+                if rank>0: const_init(testmod)
                 # Use a barrier() to make sure that process 1 loads the model after proces 0 saves it.
                 dist.barrier()
                 # configure map_location properly
