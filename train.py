@@ -503,7 +503,7 @@ def train(hyp, opt, device, tb_writer=None):
         scheduler.step()
 
 
-        DDP_VAL = True
+        DDP_VAL = False
         OLD_VAL = 5
 
         ################################################################
@@ -555,14 +555,11 @@ def train(hyp, opt, device, tb_writer=None):
                         targets = targets.to(device)
                         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
                         output = testmod(imgs, augment=False)[0]
-
-                        ### do NMS after....
-                        # output = non_max_suppression(output, multi_label=False, agnostic=True)
-
+                        output = non_max_suppression(output, multi_label=False, agnostic=True)
                         output = output[0] ## only works with batch_size==1 (for now...)
                         ####################
 
-                        all_output = gather_tensors(output, device, opt.world_size, dim=31)#, debug='OUTPUT', batch_i=batch_i)
+                        all_output = gather_tensors(output, device, opt.world_size)#, debug='OUTPUT', batch_i=batch_i)
                         all_targets = gather_tensors(targets, device, opt.world_size)#, debug='TARGETS', batch_i=batch_i)
 
                         ## imgs[0].shape
@@ -581,8 +578,8 @@ def train(hyp, opt, device, tb_writer=None):
                             if batch_i==0:
                                 print('DDP OUTPUT[0] -----------------')
                                 print(all_output[0])
-                                print('DDP TARGETS[0] -----------------')
-                                print(all_targets[0])
+                                # print('DDP TARGETS[0] -----------------')
+                                # print(all_targets[0])
 
                             ###################
                             output = all_output
@@ -603,9 +600,7 @@ def train(hyp, opt, device, tb_writer=None):
                             ## METRICS
                             idx = []
                             for si, pred in enumerate(output):
-
-                                pred = non_max_suppression(pred[None,:], multi_label=False, agnostic=True)[0]
-
+                                # pred = non_max_suppression(pred[None,:], multi_label=False, agnostic=True)[0]
                                 labels = targets[targets[:, 0] == si, 1:]
                                 nl = len(labels)
                                 tcls = labels[:, 0].tolist() if nl else []  # target class
@@ -766,7 +761,7 @@ def train(hyp, opt, device, tb_writer=None):
                                                     plots=plots and final_epoch,
                                                     wandb_logger=wandb_logger,
                                                     compute_loss=compute_loss,
-                                                    half_precision=True)
+                                                    half_precision=False) ##################
                     pfunc(f'Old Validation Time: {(time.time()-t1)/60:0.2f} min')
 
                 if not DDP_VAL:
