@@ -537,8 +537,8 @@ def train(hyp, opt, device, tb_writer=None):
                     return outputs
                 return None
 
-            # try:
-            if True:
+            try:
+            # if True:
                 # if ema:
                 #     ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
                 #     testmod=ema.ema
@@ -674,7 +674,7 @@ def train(hyp, opt, device, tb_writer=None):
                             # Append statistics (correct, conf, pcls, tcls)
                             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
 
-                dist.barrier()           
+                # dist.barrier()           
 
                 if rank in [-1, 0]:
                     # Compute statistics
@@ -757,8 +757,8 @@ def train(hyp, opt, device, tb_writer=None):
                             upload_model(opt)
                             new_best_model = False
 
-            # except Exception as e:
-            #     pfunc('DDP VALIDATION RUN FAILURE:'+ str(e))
+            except Exception as e:
+                pfunc('DDP VALIDATION RUN FAILURE:'+ str(e))
 
         ## END DDP VALIDATION
         ################################################################
