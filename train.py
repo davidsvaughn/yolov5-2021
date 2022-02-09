@@ -503,7 +503,7 @@ def train(hyp, opt, device, tb_writer=None):
         scheduler.step()
 
 
-        DDP_VAL = True
+        DDP_VAL = False
         OLD_VAL = 5
 
         ################################################################
