@@ -61,6 +61,7 @@ TQDM = False
 
 DDP_VAL = True
 OLD_VAL = 5
+DEBUG = False
 
 def gpu_stats():
     n = nvmlDeviceGetCount()
@@ -290,7 +291,7 @@ def train(hyp, opt, device, tb_writer=None):
     # Testloader
     # test_batch_size = batch_size
     test_batch_size = 1 ## so test_batch_size-per-GPU = 1 (needed for DDP validation)
-    testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
+    ddp_testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,
                                     hyp=hyp, cache=opt.cache_images and not opt.notest,
                                     cache_efficient_sampling=True, drop_last=False, shuffle=False,
                                     rect=True, rank=rank,
@@ -299,7 +300,7 @@ def train(hyp, opt, device, tb_writer=None):
     # Process 0
     if rank in [-1, 0]:
         # test_batch_size = batch_size
-        final_testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,  # testloader
+        orig_testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,
                                             hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
                                             world_size=opt.world_size, workers=opt.workers,
                                             # lazy_caching=True,
@@ -357,7 +358,7 @@ def train(hyp, opt, device, tb_writer=None):
                 imgsz=imgsz_test,
                 model=ema.ema,
                 single_cls=opt.single_cls,
-                dataloader=final_testloader,
+                dataloader=orig_testloader,
                 save_dir=save_dir,
                 verbose=True,
                 plots=False,
@@ -541,7 +542,7 @@ def train(hyp, opt, device, tb_writer=None):
                 #     testmod=ema.ema
                 # else:
                 #     testmod = model
-                testmod = de_parallel(model)
+                testmod = deepcopy(de_parallel(model))
                 testmod.eval()
                 final_epoch = epoch + 1 == epochs
                 with torch.no_grad():
@@ -551,7 +552,7 @@ def train(hyp, opt, device, tb_writer=None):
                         iou_thres = 0.25
                         iouv = torch.arange(iou_thres, 1, 0.05).to(device) # iou_thres : 0.95 : 0.05
                         niou = iouv.numel()
-                    for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
+                    for batch_i, (imgs, targets, paths, shapes) in enumerate(ddp_testloader):
                         imgs = imgs.to(device, non_blocking=True).float() / 255.0
                         nb, _, height, width = imgs.shape  # batch size, channels, height, width
                         targets = targets.to(device)
@@ -579,7 +580,7 @@ def train(hyp, opt, device, tb_writer=None):
 
                         if rank in [-1, 0]:
                             ## debugging.......
-                            if batch_i==0:
+                            if DEBUG and batch_i==0:
                                 print('DDP OUTPUT[0] -----------------')
                                 print(all_output[0])
                                 # print('DDP TARGETS[0] -----------------')
@@ -755,8 +756,8 @@ def train(hyp, opt, device, tb_writer=None):
                     t1 = time.time()
                     wandb_logger.current_epoch = epoch + 1
                     results, maps, times = test.test(data_dict, batch_size=test_batch_size, imgsz=imgsz_test, single_cls=opt.single_cls, 
-                                                    dataloader=final_testloader, save_dir=save_dir, verbose=nc < 50 and final_epoch,
-                                                    plots=plots and final_epoch, wandb_logger=wandb_logger, compute_loss=compute_loss,
+                                                    dataloader=orig_testloader, save_dir=save_dir, verbose=nc < 50 and final_epoch,
+                                                    plots=plots and final_epoch, wandb_logger=wandb_logger, compute_loss=compute_loss, DEBUG=DEBUG,
 
                                                     # model=ema.ema,
                                                     model=model,
@@ -840,7 +841,7 @@ def train(hyp, opt, device, tb_writer=None):
                                         imgsz=imgsz_test,
                                         model=attempt_load(m, device),#.half(),
                                         single_cls=opt.single_cls,
-                                        dataloader=final_testloader,
+                                        dataloader=orig_testloader,
                                         save_dir=save_dir,
                                         # verbose=nc < 50 and final_epoch,
                                         # plots=plots and final_epoch,

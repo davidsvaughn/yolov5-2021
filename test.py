@@ -52,6 +52,7 @@ def test(data,
          half_precision=True, ## dsv
          is_coco=False,
          max_by_class=True,
+         DEBUG=False,
          opt=None):
     
     print_size, print_batches = 640, 3
@@ -163,9 +164,9 @@ def test(data,
         t1 += time_synchronized() - t
 
         ## debugging.......
-        if batch_i==0:
-            print('INF OUT[0] -----------------')
-            print(inf_out[0])
+        if DEBUG and batch_i==0:
+            # print('INF OUT[0] -----------------')
+            # print(inf_out[0])
             print('OLD OUTPUT[0] -----------------')
             print(output[0])
             # print('OLD TARGETS[0] -----------------')
