@@ -515,11 +515,12 @@ def train(hyp, opt, device, tb_writer=None):
                 shape = torch.tensor(t.shape).to(device)
                 out_shapes = [torch.zeros_like(shape, device=device) for _ in range(world_size)]
                 dist.all_gather(out_shapes, shape)
-                if debug:
-                    pfunc(debug)
-                    if rank in [-1, 0]:
-                        pfunc('SHAPES....')
-                        [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
+                if debug and rank in [-1, 0] and batch_i==0: pfunc(debug)
+                # if debug:
+                #     pfunc(debug)
+                #     if rank in [-1, 0]:
+                #         pfunc('SHAPES....')
+                #         [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
                 my_dim = int(shape[0])
                 all_dims = [int(x[0]) for x in out_shapes]
                 max_dim = max(all_dims)
@@ -530,7 +531,7 @@ def train(hyp, opt, device, tb_writer=None):
                 if rank in [-1, 0]:
                     # padded_output = [x.cpu().numpy() for x in output_list]
                     outputs = [x[:all_dims[j],:] for j,x in enumerate(output_list)]
-                    if debug:
+                    if debug and batch_i==0:
                         pfunc('TENSORS....')
                         [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
                     return outputs
@@ -547,9 +548,13 @@ def train(hyp, opt, device, tb_writer=None):
                 # testmod.eval()
                 # model.eval()
 
-                # if cuda and rank != -1:
-                testmod = deepcopy(de_parallel(model))
-                testmod = DDP(testmod, device_ids=[opt.local_rank], output_device=opt.local_rank,
+                ##########################################################################################################
+                ## [https://pytorch.org/tutorials/intermediate/ddp_tutorial.html]
+                # Now, let’s create a toy module, wrap it with DDP, and feed it with some dummy input data. 
+                # Please note, as DDP broadcasts model states from rank 0 process to all other processes in the DDP constructor, 
+                # you don’t need to worry about different DDP processes start from different model parameter initial values.
+                testmod = deepcopy(de_parallel(model)) #if rank==0 else None
+                testmod = DDP(testmod, device_ids=[rank], #output_device=opt.local_rank,
                             # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
                             find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in testmod.modules()))
 
@@ -575,7 +580,7 @@ def train(hyp, opt, device, tb_writer=None):
                     output = output[0] ## only works with batch_size==1 (for now...)
                     ####################
 
-                    all_output = gather_tensors(output, device, opt.world_size)#, debug='OUTPUT', batch_i=batch_i)
+                    all_output = gather_tensors(output, device, opt.world_size, debug='OUTPUT', batch_i=batch_i)
                     all_targets = gather_tensors(targets, device, opt.world_size)#, debug='TARGETS', batch_i=batch_i)
 
                     ## imgs[0].shape
