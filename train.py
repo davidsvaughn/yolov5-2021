@@ -59,7 +59,7 @@ pfunc = logger.info
 
 TQDM = False
 
-DDP_VAL = False
+DDP_VAL = True
 OLD_VAL = 5
 
 def gpu_stats():
@@ -536,11 +536,12 @@ def train(hyp, opt, device, tb_writer=None):
                 return None
 
             try:
-                if ema:
-                    ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
-                    testmod=ema.ema
-                else:
-                    testmod = model
+                # if ema:
+                #     ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
+                #     testmod=ema.ema
+                # else:
+                #     testmod = model
+                testmod = de_parallel(model)
                 testmod.eval()
                 final_epoch = epoch + 1 == epochs
                 with torch.no_grad():
@@ -555,7 +556,9 @@ def train(hyp, opt, device, tb_writer=None):
                         nb, _, height, width = imgs.shape  # batch size, channels, height, width
                         targets = targets.to(device)
                         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
+                        ## inference step ----------------------
                         output = testmod(imgs, augment=False)[0]
+                        ## -------------------------------------
                         output = non_max_suppression(output, multi_label=False, agnostic=True)
                         output = output[0] ## only works with batch_size==1 (for now...)
                         ####################
@@ -754,7 +757,7 @@ def train(hyp, opt, device, tb_writer=None):
                     results, maps, times = test.test(data_dict, batch_size=test_batch_size, imgsz=imgsz_test, single_cls=opt.single_cls, 
                                                     dataloader=final_testloader, save_dir=save_dir, verbose=nc < 50 and final_epoch,
                                                     plots=plots and final_epoch, wandb_logger=wandb_logger, compute_loss=compute_loss,
-                                                    
+
                                                     # model=ema.ema,
                                                     model=model,
 
