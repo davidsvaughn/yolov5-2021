@@ -49,7 +49,7 @@ def test(data,
          plots=True,
          wandb_logger=None,
          compute_loss=None,
-         half_precision=True, ## dsv
+         half_precision=False, ## dsv
          is_coco=False,
          max_by_class=True,
          opt=None):
@@ -73,10 +73,10 @@ def test(data,
     if training:  # called by train.py
         device = next(model.parameters()).device  # get model device
 
-        # Multi-GPU....
-        if not half_precision and device.type != 'cpu' and torch.cuda.device_count() > 1:
-            pfunc('TEST IN DATA_PARALLEL MODE!!!')
-            model = torch.nn.DataParallel(model)
+        # # Multi-GPU....
+        # if not half_precision and device.type != 'cpu' and torch.cuda.device_count() > 1:
+        #     pfunc('Running test.py in DP mode...')
+        #     model = torch.nn.DataParallel(model)
 
     else:  # called directly
         set_logging()
@@ -92,10 +92,10 @@ def test(data,
         gs = max(int(model.stride.max()), 32)  # grid size (max stride)
         imgsz = check_img_size(imgsz, s=gs)  # check img_size
 
-        # Multi-GPU disabled, incompatible with .half() https://github.com/ultralytics/yolov5/issues/99
-        if not half_precision and device.type != 'cpu' and torch.cuda.device_count() > 1:
-            pfunc('TEST IN DATA_PARALLEL MODE!!!')
-            model = torch.nn.DataParallel(model)
+        # # Multi-GPU disabled, incompatible with .half() https://github.com/ultralytics/yolov5/issues/99
+        # if not half_precision and device.type != 'cpu' and torch.cuda.device_count() > 1:
+        #     pfunc('TEST IN DATA_PARALLEL MODE!!!')
+        #     model = torch.nn.DataParallel(model)
 
     # Half
     half = device.type != 'cpu' and half_precision  # half precision only supported on CUDA
@@ -139,16 +139,16 @@ def test(data,
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
     error_log = []
-    for batch_i, (img, targets, paths, shapes) in enumerate(dataloader):
-        img = img.to(device, non_blocking=True)
-        img = img.half() if half else img.float()  # uint8 to fp16/32
-        img /= 255.0  # 0 - 255 to 0.0 - 1.0
+    for batch_i, (imgs, targets, paths, shapes) in enumerate(dataloader):
+        imgs = imgs.to(device, non_blocking=True)
+        imgs = imgs.half() if half else imgs.float()  # uint8 to fp16/32
+        imgs /= 255.0  # 0 - 255 to 0.0 - 1.0
         targets = targets.to(device)
-        nb, _, height, width = img.shape  # batch size, channels, height, width
+        nb, _, height, width = imgs.shape  # batch size, channels, height, width
 
         # Run model
         t = time_synchronized()
-        inf_out, train_out = model(img, augment=augment)  # inference and training outputs
+        inf_out, train_out = model(imgs, augment=augment)  # inference and training outputs
         t0 += time_synchronized() - t
 
         # Compute loss
@@ -199,7 +199,7 @@ def test(data,
             if single_cls:
                 pred[:, 5] = 0
             predn = pred.clone()
-            scale_coords(img[si].shape[1:], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
+            scale_coords(imgs[si].shape[1:], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
 
             # Dims of all pred boxes (in pixels)
             pred_target_dims = torch.zeros(pred.shape[0], 4, dtype=torch.float32, device=device)
@@ -223,7 +223,7 @@ def test(data,
                                 "scores": {"class_score": conf},
                                 "domain": "pixel"} for *xyxy, conf, cls in pred.tolist()]
                     boxes = {"predictions": {"box_data": box_data, "class_labels": names_dict}}  # inference-space
-                    wandb_images.append(wandb_logger.wandb.Image(img[si], boxes=boxes, caption=path.name))
+                    wandb_images.append(wandb_logger.wandb.Image(imgs[si], boxes=boxes, caption=path.name))
             wandb_logger.log_training_progress(predn, path, names) if wandb_logger and wandb_logger.wandb_run else None
 
             # Append to pycocotools JSON dictionary
@@ -246,7 +246,7 @@ def test(data,
 
                 # target boxes
                 tbox = xywh2xyxy(labels[:, 1:5])
-                scale_coords(img[si].shape[1:], tbox, shapes[si][0], shapes[si][1])  # native-space labels
+                scale_coords(imgs[si].shape[1:], tbox, shapes[si][0], shapes[si][1])  # native-space labels
                 if plots:
                     confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1))
 
@@ -293,9 +293,9 @@ def test(data,
         if plots and batch_i < print_batches:
             prefix = Path(paths[0]).stem if batch_size==1 else f'test_batch{batch_i}'
             f1 = save_dir / f'{prefix}_labels.jpg'  # labels
-            thread1 = Thread(target=plot_images, args=(img, targets, paths, f1, names, print_size), daemon=True)
+            thread1 = Thread(target=plot_images, args=(imgs, targets, paths, f1, names, print_size), daemon=True)
             f2 = save_dir / f'{prefix}_pred.jpg'  # predictions
-            thread2 = Thread(target=plot_images, args=(img, output_to_target(output, idx), paths, f2, names, print_size), daemon=True)
+            thread2 = Thread(target=plot_images, args=(imgs, output_to_target(output, idx), paths, f2, names, print_size), daemon=True)
             thread1.start()
             thread1.join()
             thread2.start()
@@ -310,14 +310,14 @@ def test(data,
                         idx_fn[d.item()]=0
                     idx_fn = np.nonzero(idx_fn)[0]
                     f = save_dir / f'{prefix}_fn.jpg'  # labels
-                    thread = Thread(target=plot_images, args=(img, targets[idx_fn], paths, f, names, print_size, 16, True), daemon=True)
+                    thread = Thread(target=plot_images, args=(imgs, targets[idx_fn], paths, f, names, print_size, 16, True), daemon=True)
                     thread.start()
                     thread.join()
                 ## fp boxes...
                 if fp>0:
                     idx_fp = ~corr[:,0]
                     f = save_dir / f'{prefix}_fp.jpg'  # labels
-                    thread = Thread(target=plot_images, args=(img, output_to_target(output, idx, idx_fp, idx_conf), paths, f, names, print_size, 16, True), daemon=True)
+                    thread = Thread(target=plot_images, args=(imgs, output_to_target(output, idx, idx_fp, idx_conf), paths, f, names, print_size, 16, True), daemon=True)
                     thread.start()
                     thread.join()
 
