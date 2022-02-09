@@ -539,6 +539,15 @@ def train(hyp, opt, device, tb_writer=None):
 
             try:
             # if True:
+                #################################
+                final_epoch = epoch + 1 == epochs
+                if rank in [-1, 0]:
+                    t1 = time.time()
+                    stats, seen = [],0
+                    iou_thres = 0.25
+                    iouv = torch.arange(iou_thres, 1, 0.05).to(device) # iou_thres : 0.95 : 0.05
+                    niou = iouv.numel()
+                #################################
                 # if ema:
                 #     ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
                 #     testmod=ema.ema
@@ -548,6 +557,10 @@ def train(hyp, opt, device, tb_writer=None):
                 # testmod.eval()
                 # model.eval()
 
+                def const_init(model, c=0.000001):
+                    for name, param in model.named_parameters():
+                        param.data.fill_(c)
+
                 ##########################################################################################################
                 ## [https://pytorch.org/tutorials/intermediate/ddp_tutorial.html]
                 # Now, let’s create a toy module, wrap it with DDP, and feed it with some dummy input data. 
@@ -555,18 +568,13 @@ def train(hyp, opt, device, tb_writer=None):
                 # you don’t need to worry about different DDP processes start from different model parameter initial values.
                 half = False
                 testmod = deepcopy(de_parallel(model)) # if rank==0 else None
+                if rank>0:
+                    const_init(testmod)
                 testmod = DDP(testmod, device_ids=[rank], #output_device=opt.local_rank,
                             # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
                             find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.module.modules()))
 
                 #################################
-                final_epoch = epoch + 1 == epochs
-                if rank in [-1, 0]:
-                    t1 = time.time()
-                    stats, seen = [],0
-                    iou_thres = 0.25
-                    iouv = torch.arange(iou_thres, 1, 0.05).to(device) # iou_thres : 0.95 : 0.05
-                    niou = iouv.numel()
 
                 # with torch.no_grad():
                 testmod.eval()
