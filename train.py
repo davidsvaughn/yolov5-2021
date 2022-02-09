@@ -604,6 +604,7 @@ def train(hyp, opt, device, tb_writer=None):
                             idx = []
                             for si, pred in enumerate(output):
 
+                                print(pred.shape)
                                 pred = non_max_suppression(pred[None,:], multi_label=False, agnostic=True)[0]
 
                                 labels = targets[targets[:, 0] == si, 1:]
