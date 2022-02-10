@@ -139,7 +139,8 @@ def gather_tensors(t, device, world_size, dim=6, debug=None, batch_i=-1):
         return outputs
     return None
 
-@torch.no_grad()
+# @torch.no_grad()
+#            test_model, ddp_testloader, epoch, epochs, nc, rank, device, best_fitness, new_best_model
 def test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device, best_fitness, new_best_model):
     half = False
     final_epoch = epoch + 1 == epochs
@@ -786,7 +787,7 @@ def train(hyp, opt, device, tb_writer=None):
             #         return outputs
             #     return None
 
-            try:
+            # try:
             # if True:
                 #################################
                 # half = False
@@ -836,10 +837,10 @@ def train(hyp, opt, device, tb_writer=None):
                 #################################
 
                 # state_dict = ckpt['model'].float().state_dict()  # to 
-                state_dict = de_parallel(model).state_dict()
-                test_model.load_state_dict(state_dict)#, strict=False)  # load
+            state_dict = de_parallel(model).state_dict()
+            test_model.load_state_dict(state_dict)#, strict=False)  # load
 
-                best_fitness, new_best_model = test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device, best_fitness, new_best_model)
+            best_fitness, new_best_model = test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device, best_fitness, new_best_model)
 
                 #################################
 
@@ -1036,8 +1037,8 @@ def train(hyp, opt, device, tb_writer=None):
                 #             upload_model(opt)
                 #             new_best_model = False
 
-            except Exception as e:
-                pfunc('DDP VALIDATION RUN FAILURE:'+ str(e))
+            # except Exception as e:
+            #     pfunc('DDP VALIDATION RUN FAILURE:'+ str(e))
 
         ## END DDP VALIDATION
         ################################################################
