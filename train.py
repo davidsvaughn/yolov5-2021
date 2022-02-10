@@ -112,6 +112,245 @@ def upload_model(opt):
     first_upload = False
     logger.info('All artifacts uploaded!')
 
+@torch.no_grad()
+def gather_tensors(t, device, world_size, dim=6, debug=None, batch_i=-1):
+    shape = torch.tensor(t.shape).to(device)
+    out_shapes = [torch.zeros_like(shape, device=device) for _ in range(world_size)]
+    dist.all_gather(out_shapes, shape)
+    if debug and rank in [-1, 0] and batch_i==0: pfunc(debug)
+    # if debug:
+    #     pfunc(debug)
+    #     if rank in [-1, 0]:
+    #         pfunc('SHAPES....')
+    #         [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
+    my_dim = int(shape[0])
+    all_dims = [int(x[0]) for x in out_shapes]
+    max_dim = max(all_dims)
+    output_list = [torch.zeros([max_dim,dim], device=device) for _ in range(world_size)]
+    padded_output = torch.zeros([max_dim,dim], device=device)
+    padded_output[:my_dim,:] = t
+    dist.all_gather(output_list, padded_output)
+    if rank in [-1, 0]:
+        # padded_output = [x.cpu().numpy() for x in output_list]
+        outputs = [x[:all_dims[j],:] for j,x in enumerate(output_list)]
+        if debug and batch_i==0:
+            pfunc('TENSORS....')
+            [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
+        return outputs
+    return None
+
+@torch.no_grad()
+def test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device):
+    half = False
+    final_epoch = epoch + 1 == epochs
+    if rank in [-1, 0]:
+        t1 = time.time()
+        stats, seen = [],0
+        iou_thres = 0.25
+        iouv = torch.arange(iou_thres, 1, 0.05).to(device) # iou_thres : 0.95 : 0.05
+        niou = iouv.numel()
+
+    # state_dict = ckpt['model'].float().state_dict()  # to 
+    # state_dict = de_parallel(model).state_dict()
+    # test_model.load_state_dict(state_dict)#, strict=False)  # load
+
+    #################################
+
+    test_model.eval()
+    # with torch.no_grad():
+    for batch_i, (imgs, targets, paths, shapes) in enumerate(ddp_testloader):
+        # imgs = imgs.to(device, non_blocking=True).float() / 255.0
+        imgs = imgs.to(device, non_blocking=True)
+        imgs = imgs.half() if half else imgs.float()  # uint8 to fp16/32
+        imgs /= 255.0  # 0 - 255 to 0.0 - 1.0
+        nb, _, height, width = imgs.shape  # batch size, channels, height, width
+        targets = targets.to(device)
+        targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
+        ## inference step ----------------------
+        # output = testmod(imgs, augment=False)[0]
+        output = test_model(imgs, augment=False)[0]
+        ## -------------------------------------
+        output = non_max_suppression(output, multi_label=False, agnostic=True)
+        output = output[0] ## only works with batch_size==1 (for now...)
+        ####################
+
+        all_output = gather_tensors(output, device, opt.world_size, debug='OUTPUT', batch_i=batch_i)
+        all_targets = gather_tensors(targets, device, opt.world_size)#, debug='TARGETS', batch_i=batch_i)
+
+        ## imgs[0].shape
+        hw = torch.tensor([height, width]).to(device)
+        all_hw = [torch.zeros_like(hw, device=device) for _ in range(opt.world_size)]
+        dist.all_gather(all_hw, hw)
+
+        ## shapes
+        s = shapes[0]
+        t = torch.tensor(s[0] + s[1][0] + s[1][1]).to(device)
+        all_shapes = [torch.zeros_like(t, device=device) for _ in range(opt.world_size)]
+        dist.all_gather(all_shapes, t)
+
+        if rank in [-1, 0]:
+            ## debugging.......
+            if DEBUG and batch_i==0:
+                print('DDP OUTPUT[0] -----------------')
+                print(all_output[0])
+                # print('DDP TARGETS[0] -----------------')
+                # print(all_targets[0])
+
+            ###################
+            output = all_output
+            for j,targets in enumerate(all_targets):
+                targets[:,0] = j ## restore indices
+            targets = torch.cat(all_targets, 0)
+            shapes = []
+            for t in all_shapes:
+                s = list(t.cpu().numpy())
+                s = [[int(s[0]), int(s[1])],[s[2:4],s[4:]]]
+                shapes.append(s)
+            
+            ## debugging msgs....
+            # pfunc(f'TARGETS: {targets.shape}')
+            # [pfunc(f"TEST_BATCH_{batch_i} : output[{j}] : {x.shape}") for j,x in enumerate(output)]
+            # [pfunc(f"TEST_BATCH_{batch_i} : shapes[{j}] : {x}") for j,x in enumerate(shapes)]
+
+            ## METRICS
+            idx = []
+            for si, pred in enumerate(output):
+                # pred = non_max_suppression(pred[None,:], multi_label=False, agnostic=True)[0]
+                labels = targets[targets[:, 0] == si, 1:]
+                nl = len(labels)
+                tcls = labels[:, 0].tolist() if nl else []  # target class
+                # path = Path(paths[si])
+                seen += 1
+                if len(pred) == 0:
+                    idx.append(None)
+                    if nl:
+                        stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
+                    continue
+
+                idx.append(None)
+                predn = pred.clone()
+                scale_coords(all_hw[si], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
+
+                # Assign all predictions as incorrect
+                correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
+                if nl:
+                    detected = []  # target indices
+                    tcls_tensor = labels[:, 0]
+
+                    # target boxes
+                    tbox = xywh2xyxy(labels[:, 1:5])
+                    scale_coords(all_hw[si], tbox, shapes[si][0], shapes[si][1])  # native-space labels
+                    # if plots: confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1))
+
+                    # Per target class
+                    for cls in torch.unique(tcls_tensor):
+                        ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1)  # target indices
+                        pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # prediction indices
+
+                        # Search for detections
+                        if pi.shape[0]:
+                            # Prediction to target ious
+                            ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1)  # best ious, indices
+
+                            # Append detections
+                            detected_set = set()
+                            for j in (ious > iouv[0]).nonzero(as_tuple=False):
+                                d = ti[i[j]]  # detected target... index into target array....
+                                if d.item() not in detected_set:
+                                    detected_set.add(d.item())
+                                    detected.append(d)
+                                    correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
+                                    k = pi[j] ## index into pred array.....
+                                    # pred_target_dims[k,2:] = target_dims[d]
+                                    if len(detected) == nl:  # all targets already located in image
+                                        break
+
+                # Append statistics (correct, conf, pcls, tcls)
+                stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))       
+
+    if rank in [-1, 0]:
+        # Compute statistics
+        stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
+        conf_best = -1
+        ct=None
+        max_by_class=True
+        conf_thres=-1
+        if len(stats) and stats[0].any():
+            mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, max_by_class=max_by_class, conf_thres=conf_thres)
+        else:
+            nt = torch.zeros(1)
+        # Print results
+        pfunc('------------------------------------------- Validation Set -----------------------------------------------')
+        fmt = '%{}s'.format(2+max([len(s) for s in names]))
+        s = (fmt + '%12s' * 7) % ('Class', 'Images', 'Targets', 'P', 'R', 'F1', 'mAP@.5', 'mAP@.5:.95')
+        pfunc(s)
+        pf = fmt + '%12.3g' * 7  # print format
+        # Print results per class
+        if nc < 50 and nc > 1 and len(stats):
+            for i, c in enumerate(ap_class):
+                pfunc(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i])) #log
+        ## Print averages
+        if nc>1:
+            pfunc('')
+            pfunc(pf % ('AVG', seen, nt.sum(), p.mean(), r.mean(), f1.mean(), ap50.mean(), ap.mean())) ## unweighted average
+        ss = 'WEIGHTED AVG' if nc>1 else names[0]
+        pfunc(pf % (ss, seen, nt.sum(), mp, mr, mf1, map50, map)) ## weighted average (if nc>1)
+        if conf_best>-1:
+            pfunc('\nOptimal Confidence Threshold: {0:0.3f}'.format(conf_best)) #log
+            if max_by_class:
+                pfunc('Optimal Confidence Thresholds (Per-Class): {}'.format(list(cc.round(3)))) #log
+        pfunc(f'DDP Validation Time: {(time.time()-t1)/60:0.2f} min')
+
+        # Logging
+        results = (mp, mr, mf1, map50, map)#, *(loss.cpu() / len(dataloader)).tolist())
+        tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
+                'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
+                # 'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
+                'x/lr0', 'x/lr1', 'x/lr2']  # params
+        for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
+            if tb_writer:
+                tb_writer.add_scalar(tag, x, epoch)  # tensorboard
+            if wandb_logger.wandb:
+                wandb_logger.log({tag: x})  # W&B
+
+        # Update best mAP
+        fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+        if fi > best_fitness:
+            best_fitness = fi
+        wandb_logger.end_epoch(best_result=best_fitness == fi)
+
+        # Save model
+        if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
+            ckpt = {'epoch': epoch,
+                    'best_fitness': best_fitness,
+                    # 'training_results': results_file.read_text(),
+                    'model': deepcopy(de_parallel(model)).half(),
+                    'ema': deepcopy(ema.ema).half(),
+                    'updates': ema.updates,
+                    'optimizer': optimizer.state_dict(),
+                    'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
+
+            # Save last, best and delete
+            torch.save(ckpt, last)
+            if best_fitness == fi:
+                pfunc('Saving best model!')
+                torch.save(ckpt, best)
+                new_best_model = True
+            if wandb_logger.wandb:
+                if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
+                    wandb_logger.log_model(
+                        last.parent, opt, epoch, fi, best_model=best_fitness == fi)
+            del ckpt
+
+        # Upload best model to s3
+        if (epoch+1)%10==0 and epoch>15:
+            if new_best_model:
+                strip_optimizer(best)
+                upload_model(opt)
+                new_best_model = False
+
+    return best_fitness, new_best_model
+
 def train(hyp, opt, device, tb_writer=None):
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
     save_dir, epochs, batch_size, total_batch_size, weights, rank = \
@@ -303,6 +542,7 @@ def train(hyp, opt, device, tb_writer=None):
                                     world_size=opt.world_size, workers=opt.workers,
                                     pad=0.5, prefix=colorstr('val: '))[0]
     # Process 0
+    new_best_model = False
     if rank in [-1, 0]:
         # test_batch_size = batch_size
         orig_testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,
@@ -310,7 +550,6 @@ def train(hyp, opt, device, tb_writer=None):
                                             world_size=opt.world_size, workers=opt.workers,
                                             # lazy_caching=True,
                                             pad=0.5, prefix=colorstr('val: '))[0]
-        new_best_model = False
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
             c = torch.tensor(labels[:, 0])  # classes
@@ -521,43 +760,43 @@ def train(hyp, opt, device, tb_writer=None):
             #     continue
 
             # @torch.no_grad()
-            def gather_tensors(t, device, world_size, dim=6, debug=None, batch_i=-1):
-                shape = torch.tensor(t.shape).to(device)
-                out_shapes = [torch.zeros_like(shape, device=device) for _ in range(world_size)]
-                dist.all_gather(out_shapes, shape)
-                if debug and rank in [-1, 0] and batch_i==0: pfunc(debug)
-                # if debug:
-                #     pfunc(debug)
-                #     if rank in [-1, 0]:
-                #         pfunc('SHAPES....')
-                #         [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
-                my_dim = int(shape[0])
-                all_dims = [int(x[0]) for x in out_shapes]
-                max_dim = max(all_dims)
-                output_list = [torch.zeros([max_dim,dim], device=device) for _ in range(world_size)]
-                padded_output = torch.zeros([max_dim,dim], device=device)
-                padded_output[:my_dim,:] = t
-                dist.all_gather(output_list, padded_output)
-                if rank in [-1, 0]:
-                    # padded_output = [x.cpu().numpy() for x in output_list]
-                    outputs = [x[:all_dims[j],:] for j,x in enumerate(output_list)]
-                    if debug and batch_i==0:
-                        pfunc('TENSORS....')
-                        [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
-                    return outputs
-                return None
+            # def gather_tensors(t, device, world_size, dim=6, debug=None, batch_i=-1):
+            #     shape = torch.tensor(t.shape).to(device)
+            #     out_shapes = [torch.zeros_like(shape, device=device) for _ in range(world_size)]
+            #     dist.all_gather(out_shapes, shape)
+            #     if debug and rank in [-1, 0] and batch_i==0: pfunc(debug)
+            #     # if debug:
+            #     #     pfunc(debug)
+            #     #     if rank in [-1, 0]:
+            #     #         pfunc('SHAPES....')
+            #     #         [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
+            #     my_dim = int(shape[0])
+            #     all_dims = [int(x[0]) for x in out_shapes]
+            #     max_dim = max(all_dims)
+            #     output_list = [torch.zeros([max_dim,dim], device=device) for _ in range(world_size)]
+            #     padded_output = torch.zeros([max_dim,dim], device=device)
+            #     padded_output[:my_dim,:] = t
+            #     dist.all_gather(output_list, padded_output)
+            #     if rank in [-1, 0]:
+            #         # padded_output = [x.cpu().numpy() for x in output_list]
+            #         outputs = [x[:all_dims[j],:] for j,x in enumerate(output_list)]
+            #         if debug and batch_i==0:
+            #             pfunc('TENSORS....')
+            #             [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
+            #         return outputs
+            #     return None
 
             try:
             # if True:
                 #################################
-                half = False
-                final_epoch = epoch + 1 == epochs
-                if rank in [-1, 0]:
-                    t1 = time.time()
-                    stats, seen = [],0
-                    iou_thres = 0.25
-                    iouv = torch.arange(iou_thres, 1, 0.05).to(device) # iou_thres : 0.95 : 0.05
-                    niou = iouv.numel()
+                # half = False
+                # final_epoch = epoch + 1 == epochs
+                # if rank in [-1, 0]:
+                #     t1 = time.time()
+                #     stats, seen = [],0
+                #     iou_thres = 0.25
+                #     iouv = torch.arange(iou_thres, 1, 0.05).to(device) # iou_thres : 0.95 : 0.05
+                #     niou = iouv.numel()
                 #################################
                 # if ema:
                 #     ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
@@ -568,9 +807,9 @@ def train(hyp, opt, device, tb_writer=None):
                 # testmod.eval()
                 # model.eval()
 
-                def const_init(model, c=0.000001):
-                    for name, param in model.named_parameters():
-                        param.data.fill_(c)
+                # def const_init(model, c=0.000001):
+                #     for name, param in model.named_parameters():
+                #         param.data.fill_(c)
 
                 ##########################################################################################################
                 # ## [https://pytorch.org/tutorials/intermediate/ddp_tutorial.html]
@@ -600,200 +839,202 @@ def train(hyp, opt, device, tb_writer=None):
                 state_dict = de_parallel(model).state_dict()
                 test_model.load_state_dict(state_dict)#, strict=False)  # load
 
+                best_fitness, new_best_model = test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device, best_fitness, new_best_model)
+
                 #################################
 
-                test_model.eval()
-                with torch.no_grad():
-                    for batch_i, (imgs, targets, paths, shapes) in enumerate(ddp_testloader):
-                        # imgs = imgs.to(device, non_blocking=True).float() / 255.0
-                        imgs = imgs.to(device, non_blocking=True)
-                        imgs = imgs.half() if half else imgs.float()  # uint8 to fp16/32
-                        imgs /= 255.0  # 0 - 255 to 0.0 - 1.0
-                        nb, _, height, width = imgs.shape  # batch size, channels, height, width
-                        targets = targets.to(device)
-                        targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
-                        ## inference step ----------------------
-                        # output = testmod(imgs, augment=False)[0]
-                        output = test_model(imgs, augment=False)[0]
-                        ## -------------------------------------
-                        output = non_max_suppression(output, multi_label=False, agnostic=True)
-                        output = output[0] ## only works with batch_size==1 (for now...)
-                        ####################
+                # test_model.eval()
+                # with torch.no_grad():
+                #     for batch_i, (imgs, targets, paths, shapes) in enumerate(ddp_testloader):
+                #         # imgs = imgs.to(device, non_blocking=True).float() / 255.0
+                #         imgs = imgs.to(device, non_blocking=True)
+                #         imgs = imgs.half() if half else imgs.float()  # uint8 to fp16/32
+                #         imgs /= 255.0  # 0 - 255 to 0.0 - 1.0
+                #         nb, _, height, width = imgs.shape  # batch size, channels, height, width
+                #         targets = targets.to(device)
+                #         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
+                #         ## inference step ----------------------
+                #         # output = testmod(imgs, augment=False)[0]
+                #         output = test_model(imgs, augment=False)[0]
+                #         ## -------------------------------------
+                #         output = non_max_suppression(output, multi_label=False, agnostic=True)
+                #         output = output[0] ## only works with batch_size==1 (for now...)
+                #         ####################
 
-                        all_output = gather_tensors(output, device, opt.world_size, debug='OUTPUT', batch_i=batch_i)
-                        all_targets = gather_tensors(targets, device, opt.world_size)#, debug='TARGETS', batch_i=batch_i)
+                #         all_output = gather_tensors(output, device, opt.world_size, debug='OUTPUT', batch_i=batch_i)
+                #         all_targets = gather_tensors(targets, device, opt.world_size)#, debug='TARGETS', batch_i=batch_i)
 
-                        ## imgs[0].shape
-                        hw = torch.tensor([height, width]).to(device)
-                        all_hw = [torch.zeros_like(hw, device=device) for _ in range(opt.world_size)]
-                        dist.all_gather(all_hw, hw)
+                #         ## imgs[0].shape
+                #         hw = torch.tensor([height, width]).to(device)
+                #         all_hw = [torch.zeros_like(hw, device=device) for _ in range(opt.world_size)]
+                #         dist.all_gather(all_hw, hw)
 
-                        ## shapes
-                        s = shapes[0]
-                        t = torch.tensor(s[0] + s[1][0] + s[1][1]).to(device)
-                        all_shapes = [torch.zeros_like(t, device=device) for _ in range(opt.world_size)]
-                        dist.all_gather(all_shapes, t)
+                #         ## shapes
+                #         s = shapes[0]
+                #         t = torch.tensor(s[0] + s[1][0] + s[1][1]).to(device)
+                #         all_shapes = [torch.zeros_like(t, device=device) for _ in range(opt.world_size)]
+                #         dist.all_gather(all_shapes, t)
 
-                        if rank in [-1, 0]:
-                            ## debugging.......
-                            if DEBUG and batch_i==0:
-                                print('DDP OUTPUT[0] -----------------')
-                                print(all_output[0])
-                                # print('DDP TARGETS[0] -----------------')
-                                # print(all_targets[0])
+                #         if rank in [-1, 0]:
+                #             ## debugging.......
+                #             if DEBUG and batch_i==0:
+                #                 print('DDP OUTPUT[0] -----------------')
+                #                 print(all_output[0])
+                #                 # print('DDP TARGETS[0] -----------------')
+                #                 # print(all_targets[0])
 
-                            ###################
-                            output = all_output
-                            for j,targets in enumerate(all_targets):
-                                targets[:,0] = j ## restore indices
-                            targets = torch.cat(all_targets, 0)
-                            shapes = []
-                            for t in all_shapes:
-                                s = list(t.cpu().numpy())
-                                s = [[int(s[0]), int(s[1])],[s[2:4],s[4:]]]
-                                shapes.append(s)
+                #             ###################
+                #             output = all_output
+                #             for j,targets in enumerate(all_targets):
+                #                 targets[:,0] = j ## restore indices
+                #             targets = torch.cat(all_targets, 0)
+                #             shapes = []
+                #             for t in all_shapes:
+                #                 s = list(t.cpu().numpy())
+                #                 s = [[int(s[0]), int(s[1])],[s[2:4],s[4:]]]
+                #                 shapes.append(s)
                             
-                            ## debugging msgs....
-                            # pfunc(f'TARGETS: {targets.shape}')
-                            # [pfunc(f"TEST_BATCH_{batch_i} : output[{j}] : {x.shape}") for j,x in enumerate(output)]
-                            # [pfunc(f"TEST_BATCH_{batch_i} : shapes[{j}] : {x}") for j,x in enumerate(shapes)]
+                #             ## debugging msgs....
+                #             # pfunc(f'TARGETS: {targets.shape}')
+                #             # [pfunc(f"TEST_BATCH_{batch_i} : output[{j}] : {x.shape}") for j,x in enumerate(output)]
+                #             # [pfunc(f"TEST_BATCH_{batch_i} : shapes[{j}] : {x}") for j,x in enumerate(shapes)]
 
-                            ## METRICS
-                            idx = []
-                            for si, pred in enumerate(output):
-                                # pred = non_max_suppression(pred[None,:], multi_label=False, agnostic=True)[0]
-                                labels = targets[targets[:, 0] == si, 1:]
-                                nl = len(labels)
-                                tcls = labels[:, 0].tolist() if nl else []  # target class
-                                # path = Path(paths[si])
-                                seen += 1
-                                if len(pred) == 0:
-                                    idx.append(None)
-                                    if nl:
-                                        stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
-                                    continue
+                #             ## METRICS
+                #             idx = []
+                #             for si, pred in enumerate(output):
+                #                 # pred = non_max_suppression(pred[None,:], multi_label=False, agnostic=True)[0]
+                #                 labels = targets[targets[:, 0] == si, 1:]
+                #                 nl = len(labels)
+                #                 tcls = labels[:, 0].tolist() if nl else []  # target class
+                #                 # path = Path(paths[si])
+                #                 seen += 1
+                #                 if len(pred) == 0:
+                #                     idx.append(None)
+                #                     if nl:
+                #                         stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
+                #                     continue
 
-                                idx.append(None)
-                                predn = pred.clone()
-                                scale_coords(all_hw[si], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
+                #                 idx.append(None)
+                #                 predn = pred.clone()
+                #                 scale_coords(all_hw[si], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
 
-                                # Assign all predictions as incorrect
-                                correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
-                                if nl:
-                                    detected = []  # target indices
-                                    tcls_tensor = labels[:, 0]
+                #                 # Assign all predictions as incorrect
+                #                 correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
+                #                 if nl:
+                #                     detected = []  # target indices
+                #                     tcls_tensor = labels[:, 0]
 
-                                    # target boxes
-                                    tbox = xywh2xyxy(labels[:, 1:5])
-                                    scale_coords(all_hw[si], tbox, shapes[si][0], shapes[si][1])  # native-space labels
-                                    # if plots: confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1))
+                #                     # target boxes
+                #                     tbox = xywh2xyxy(labels[:, 1:5])
+                #                     scale_coords(all_hw[si], tbox, shapes[si][0], shapes[si][1])  # native-space labels
+                #                     # if plots: confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1))
 
-                                    # Per target class
-                                    for cls in torch.unique(tcls_tensor):
-                                        ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1)  # target indices
-                                        pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # prediction indices
+                #                     # Per target class
+                #                     for cls in torch.unique(tcls_tensor):
+                #                         ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1)  # target indices
+                #                         pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # prediction indices
 
-                                        # Search for detections
-                                        if pi.shape[0]:
-                                            # Prediction to target ious
-                                            ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1)  # best ious, indices
+                #                         # Search for detections
+                #                         if pi.shape[0]:
+                #                             # Prediction to target ious
+                #                             ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1)  # best ious, indices
 
-                                            # Append detections
-                                            detected_set = set()
-                                            for j in (ious > iouv[0]).nonzero(as_tuple=False):
-                                                d = ti[i[j]]  # detected target... index into target array....
-                                                if d.item() not in detected_set:
-                                                    detected_set.add(d.item())
-                                                    detected.append(d)
-                                                    correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
-                                                    k = pi[j] ## index into pred array.....
-                                                    # pred_target_dims[k,2:] = target_dims[d]
-                                                    if len(detected) == nl:  # all targets already located in image
-                                                        break
+                #                             # Append detections
+                #                             detected_set = set()
+                #                             for j in (ious > iouv[0]).nonzero(as_tuple=False):
+                #                                 d = ti[i[j]]  # detected target... index into target array....
+                #                                 if d.item() not in detected_set:
+                #                                     detected_set.add(d.item())
+                #                                     detected.append(d)
+                #                                     correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
+                #                                     k = pi[j] ## index into pred array.....
+                #                                     # pred_target_dims[k,2:] = target_dims[d]
+                #                                     if len(detected) == nl:  # all targets already located in image
+                #                                         break
 
-                                # Append statistics (correct, conf, pcls, tcls)
-                                stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))       
+                #                 # Append statistics (correct, conf, pcls, tcls)
+                #                 stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))       
 
-                if rank in [-1, 0]:
-                    # Compute statistics
-                    stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
-                    conf_best = -1
-                    ct=None
-                    max_by_class=True
-                    conf_thres=-1
-                    if len(stats) and stats[0].any():
-                        mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, max_by_class=max_by_class, conf_thres=conf_thres)
-                    else:
-                        nt = torch.zeros(1)
-                    # Print results
-                    pfunc('------------------------------------------- Validation Set -----------------------------------------------')
-                    fmt = '%{}s'.format(2+max([len(s) for s in names]))
-                    s = (fmt + '%12s' * 7) % ('Class', 'Images', 'Targets', 'P', 'R', 'F1', 'mAP@.5', 'mAP@.5:.95')
-                    pfunc(s)
-                    pf = fmt + '%12.3g' * 7  # print format
-                    # Print results per class
-                    if nc < 50 and nc > 1 and len(stats):
-                        for i, c in enumerate(ap_class):
-                            pfunc(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i])) #log
-                    ## Print averages
-                    if nc>1:
-                        pfunc('')
-                        pfunc(pf % ('AVG', seen, nt.sum(), p.mean(), r.mean(), f1.mean(), ap50.mean(), ap.mean())) ## unweighted average
-                    ss = 'WEIGHTED AVG' if nc>1 else names[0]
-                    pfunc(pf % (ss, seen, nt.sum(), mp, mr, mf1, map50, map)) ## weighted average (if nc>1)
-                    if conf_best>-1:
-                        pfunc('\nOptimal Confidence Threshold: {0:0.3f}'.format(conf_best)) #log
-                        if max_by_class:
-                            pfunc('Optimal Confidence Thresholds (Per-Class): {}'.format(list(cc.round(3)))) #log
-                    pfunc(f'DDP Validation Time: {(time.time()-t1)/60:0.2f} min')
+                # if rank in [-1, 0]:
+                #     # Compute statistics
+                #     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
+                #     conf_best = -1
+                #     ct=None
+                #     max_by_class=True
+                #     conf_thres=-1
+                #     if len(stats) and stats[0].any():
+                #         mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, max_by_class=max_by_class, conf_thres=conf_thres)
+                #     else:
+                #         nt = torch.zeros(1)
+                #     # Print results
+                #     pfunc('------------------------------------------- Validation Set -----------------------------------------------')
+                #     fmt = '%{}s'.format(2+max([len(s) for s in names]))
+                #     s = (fmt + '%12s' * 7) % ('Class', 'Images', 'Targets', 'P', 'R', 'F1', 'mAP@.5', 'mAP@.5:.95')
+                #     pfunc(s)
+                #     pf = fmt + '%12.3g' * 7  # print format
+                #     # Print results per class
+                #     if nc < 50 and nc > 1 and len(stats):
+                #         for i, c in enumerate(ap_class):
+                #             pfunc(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i])) #log
+                #     ## Print averages
+                #     if nc>1:
+                #         pfunc('')
+                #         pfunc(pf % ('AVG', seen, nt.sum(), p.mean(), r.mean(), f1.mean(), ap50.mean(), ap.mean())) ## unweighted average
+                #     ss = 'WEIGHTED AVG' if nc>1 else names[0]
+                #     pfunc(pf % (ss, seen, nt.sum(), mp, mr, mf1, map50, map)) ## weighted average (if nc>1)
+                #     if conf_best>-1:
+                #         pfunc('\nOptimal Confidence Threshold: {0:0.3f}'.format(conf_best)) #log
+                #         if max_by_class:
+                #             pfunc('Optimal Confidence Thresholds (Per-Class): {}'.format(list(cc.round(3)))) #log
+                #     pfunc(f'DDP Validation Time: {(time.time()-t1)/60:0.2f} min')
 
-                    # Logging
-                    results = (mp, mr, mf1, map50, map)#, *(loss.cpu() / len(dataloader)).tolist())
-                    tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
-                            'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
-                            # 'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
-                            'x/lr0', 'x/lr1', 'x/lr2']  # params
-                    for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
-                        if tb_writer:
-                            tb_writer.add_scalar(tag, x, epoch)  # tensorboard
-                        if wandb_logger.wandb:
-                            wandb_logger.log({tag: x})  # W&B
+                #     # Logging
+                #     results = (mp, mr, mf1, map50, map)#, *(loss.cpu() / len(dataloader)).tolist())
+                #     tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
+                #             'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
+                #             # 'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
+                #             'x/lr0', 'x/lr1', 'x/lr2']  # params
+                #     for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
+                #         if tb_writer:
+                #             tb_writer.add_scalar(tag, x, epoch)  # tensorboard
+                #         if wandb_logger.wandb:
+                #             wandb_logger.log({tag: x})  # W&B
 
-                    # Update best mAP
-                    fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
-                    if fi > best_fitness:
-                        best_fitness = fi
-                    wandb_logger.end_epoch(best_result=best_fitness == fi)
+                #     # Update best mAP
+                #     fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+                #     if fi > best_fitness:
+                #         best_fitness = fi
+                #     wandb_logger.end_epoch(best_result=best_fitness == fi)
 
-                    # Save model
-                    if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
-                        ckpt = {'epoch': epoch,
-                                'best_fitness': best_fitness,
-                                # 'training_results': results_file.read_text(),
-                                'model': deepcopy(de_parallel(model)).half(),
-                                'ema': deepcopy(ema.ema).half(),
-                                'updates': ema.updates,
-                                'optimizer': optimizer.state_dict(),
-                                'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
+                #     # Save model
+                #     if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
+                #         ckpt = {'epoch': epoch,
+                #                 'best_fitness': best_fitness,
+                #                 # 'training_results': results_file.read_text(),
+                #                 'model': deepcopy(de_parallel(model)).half(),
+                #                 'ema': deepcopy(ema.ema).half(),
+                #                 'updates': ema.updates,
+                #                 'optimizer': optimizer.state_dict(),
+                #                 'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
 
-                        # Save last, best and delete
-                        torch.save(ckpt, last)
-                        if best_fitness == fi:
-                            pfunc('Saving best model!')
-                            torch.save(ckpt, best)
-                            new_best_model = True
-                        if wandb_logger.wandb:
-                            if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
-                                wandb_logger.log_model(
-                                    last.parent, opt, epoch, fi, best_model=best_fitness == fi)
-                        del ckpt
+                #         # Save last, best and delete
+                #         torch.save(ckpt, last)
+                #         if best_fitness == fi:
+                #             pfunc('Saving best model!')
+                #             torch.save(ckpt, best)
+                #             new_best_model = True
+                #         if wandb_logger.wandb:
+                #             if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
+                #                 wandb_logger.log_model(
+                #                     last.parent, opt, epoch, fi, best_model=best_fitness == fi)
+                #         del ckpt
 
-                    # Upload best model to s3
-                    if (epoch+1)%10==0 and epoch>15:
-                        if new_best_model:
-                            strip_optimizer(best)
-                            upload_model(opt)
-                            new_best_model = False
+                #     # Upload best model to s3
+                #     if (epoch+1)%10==0 and epoch>15:
+                #         if new_best_model:
+                #             strip_optimizer(best)
+                #             upload_model(opt)
+                #             new_best_model = False
 
             except Exception as e:
                 pfunc('DDP VALIDATION RUN FAILURE:'+ str(e))
