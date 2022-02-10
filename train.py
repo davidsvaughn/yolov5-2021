@@ -140,7 +140,7 @@ def gather_tensors(t, device, world_size, dim=6, debug=None, batch_i=-1):
     return None
 
 @torch.no_grad()
-def test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device):
+def test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device, best_fitness, new_best_model):
     half = False
     final_epoch = epoch + 1 == epochs
     if rank in [-1, 0]:
