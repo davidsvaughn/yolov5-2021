@@ -60,7 +60,7 @@ pfunc = logger.info
 TQDM = False
 
 DDP_VAL = True
-OLD_VAL = 5
+OLD_VAL = 500
 DEBUG = False
 
 def gpu_stats():
@@ -141,7 +141,7 @@ def gather_tensors(t, device, rank, world_size, dim=6, debug=None, batch_i=-1):
 
 @torch.no_grad()
 def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, names, best_fitness, new_best_model):
-    half = False
+
     final_epoch = epoch + 1 == epochs
     if rank in [-1, 0]:
         t1 = time.time()
@@ -150,6 +150,8 @@ def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, n
         iouv = torch.arange(iou_thres, 1, 0.05).to(device) # iou_thres : 0.95 : 0.05
         niou = iouv.numel()
 
+    half = True
+
     # state_dict = ckpt['model'].float().state_dict()  # to 
     # state_dict = de_parallel(model).state_dict()
     # test_model.load_state_dict(state_dict)#, strict=False)  # load
@@ -157,6 +159,7 @@ def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, n
     #################################
 
     test_model.eval()
+    if half: test_model.half()
     for batch_i, (imgs, targets, paths, shapes) in enumerate(ddp_testloader):
         # imgs = imgs.to(device, non_blocking=True).float() / 255.0
         imgs = imgs.to(device, non_blocking=True)
@@ -173,7 +176,7 @@ def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, n
         output = output[0] ## only works with batch_size==1 (for now...)
         ####################
 
-        all_output = gather_tensors(output, device, rank, opt.world_size, debug='OUTPUT', batch_i=batch_i)
+        all_output = gather_tensors(output, device, rank, opt.world_size)#, debug='OUTPUT', batch_i=batch_i)
         all_targets = gather_tensors(targets, device, rank, opt.world_size)#, debug='TARGETS', batch_i=batch_i)
 
         ## imgs[0].shape
@@ -423,10 +426,10 @@ def train(hyp, opt, device, tb_writer=None):
             logger.info('freezing %s' % k)
             v.requires_grad = False
 
-    ## create separate testing model
-    test_model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
-    for k, v in test_model.named_parameters():
-        v.requires_grad = False  # freeze all layers
+    # ## create separate testing model
+    # test_model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
+    # for k, v in test_model.named_parameters():
+    #     v.requires_grad = False  # freeze all layers
 
     # Optimizer
     nbs = 64  # nominal batch size
@@ -837,13 +840,14 @@ def train(hyp, opt, device, tb_writer=None):
                 #################################
 
                 # state_dict = ckpt['model'].float().state_dict()  # to 
-            state_dict = de_parallel(model).state_dict()
-            test_model.load_state_dict(state_dict)#, strict=False)  # load
-
+            # state_dict = de_parallel(model).state_dict()
+            # test_model.load_state_dict(state_dict)#, strict=False)  # load
             # testmod = test_model
-            testmod = de_parallel(model)
+            # testmod = de_parallel(model)
 
-            best_fitness, new_best_model = test_ddp(opt, testmod, ddp_testloader, epoch, epochs, nc, rank, device, names, best_fitness, new_best_model)
+            best_fitness, new_best_model = test_ddp(opt, de_parallel(model), ddp_testloader, 
+                                                    epoch, epochs, nc, rank, device, 
+                                                    names, best_fitness, new_best_model)
 
                 #################################
 
