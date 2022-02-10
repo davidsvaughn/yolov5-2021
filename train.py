@@ -141,7 +141,7 @@ def gather_tensors(t, device, rank, world_size, dim=6, debug=None, batch_i=-1):
 
 # @torch.no_grad()
 #            test_model, ddp_testloader, epoch, epochs, nc, rank, device, best_fitness, new_best_model
-def test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device, best_fitness, new_best_model):
+def test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device, names, best_fitness, new_best_model):
     half = False
     final_epoch = epoch + 1 == epochs
     if rank in [-1, 0]:
@@ -840,7 +840,7 @@ def train(hyp, opt, device, tb_writer=None):
             state_dict = de_parallel(model).state_dict()
             test_model.load_state_dict(state_dict)#, strict=False)  # load
 
-            best_fitness, new_best_model = test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device, best_fitness, new_best_model)
+            best_fitness, new_best_model = test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device, names, best_fitness, new_best_model)
 
                 #################################
 
