@@ -139,8 +139,7 @@ def gather_tensors(t, device, rank, world_size, dim=6, debug=None, batch_i=-1):
         return outputs
     return None
 
-# @torch.no_grad()
-#            test_model, ddp_testloader, epoch, epochs, nc, rank, device, best_fitness, new_best_model
+@torch.no_grad()
 def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, names, best_fitness, new_best_model):
     half = False
     final_epoch = epoch + 1 == epochs
@@ -158,7 +157,6 @@ def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, n
     #################################
 
     test_model.eval()
-    # with torch.no_grad():
     for batch_i, (imgs, targets, paths, shapes) in enumerate(ddp_testloader):
         # imgs = imgs.to(device, non_blocking=True).float() / 255.0
         imgs = imgs.to(device, non_blocking=True)
@@ -842,7 +840,10 @@ def train(hyp, opt, device, tb_writer=None):
             state_dict = de_parallel(model).state_dict()
             test_model.load_state_dict(state_dict)#, strict=False)  # load
 
-            best_fitness, new_best_model = test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, names, best_fitness, new_best_model)
+            # testmod = test_model
+            testmod = de_parallel(model)
+
+            best_fitness, new_best_model = test_ddp(opt, testmod, ddp_testloader, epoch, epochs, nc, rank, device, names, best_fitness, new_best_model)
 
                 #################################
 
