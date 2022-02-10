@@ -183,6 +183,11 @@ def train(hyp, opt, device, tb_writer=None):
             logger.info('freezing %s' % k)
             v.requires_grad = False
 
+    ## create separate testing model
+    test_model = Model(opt.cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
+    for k, v in test_model.named_parameters():
+        v.requires_grad = False  # freeze all layers
+
     # Optimizer
     nbs = 64  # nominal batch size
     accumulate = max(round(nbs / total_batch_size), 1)  # accumulate loss before optimizing
@@ -511,9 +516,10 @@ def train(hyp, opt, device, tb_writer=None):
         ## DDP VALIDATION....
         if DDP_VAL:
 
-            if not (epoch>0 and (epoch+1)%OLD_VAL==0):
-                continue
-            
+            ### ONLY every N epochs...
+            # if not (epoch>0 and (epoch+1)%OLD_VAL==0):
+            #     continue
+
             # @torch.no_grad()
             def gather_tensors(t, device, world_size, dim=6, debug=None, batch_i=-1):
                 shape = torch.tensor(t.shape).to(device)
@@ -544,6 +550,7 @@ def train(hyp, opt, device, tb_writer=None):
             try:
             # if True:
                 #################################
+                half = False
                 final_epoch = epoch + 1 == epochs
                 if rank in [-1, 0]:
                     t1 = time.time()
@@ -566,31 +573,36 @@ def train(hyp, opt, device, tb_writer=None):
                         param.data.fill_(c)
 
                 ##########################################################################################################
-                ## [https://pytorch.org/tutorials/intermediate/ddp_tutorial.html]
-                # Now, let’s create a toy module, wrap it with DDP, and feed it with some dummy input data. 
-                # Please note, as DDP broadcasts model states from rank 0 process to all other processes in the DDP constructor, 
-                # you don’t need to worry about different DDP processes start from different model parameter initial values.
-                half = False
-                testmod = deepcopy(de_parallel(model)) # if rank==0 else None
-                # if rank>0: const_init(testmod)
-                testmod = DDP(testmod, device_ids=[rank], #output_device=opt.local_rank,
-                            # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
-                            find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.module.modules()))
+                # ## [https://pytorch.org/tutorials/intermediate/ddp_tutorial.html]
+                # # Now, let’s create a toy module, wrap it with DDP, and feed it with some dummy input data. 
+                # # Please note, as DDP broadcasts model states from rank 0 process to all other processes in the DDP constructor, 
+                # # you don’t need to worry about different DDP processes start from different model parameter initial values.
+                # testmod = deepcopy(de_parallel(model)) # if rank==0 else None
+                # # if rank>0: const_init(testmod)
+                # testmod = DDP(testmod, device_ids=[rank], #output_device=opt.local_rank,
+                #             # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
+                #             find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.module.modules()))
                 
-                CHECKPOINT_PATH = 'chkpt.pt'
-                if rank == 0:
-                    torch.save(testmod.state_dict(), CHECKPOINT_PATH)
-                if rank>0: const_init(testmod)
-                # Use a barrier() to make sure that process 1 loads the model after proces 0 saves it.
-                dist.barrier()
-                # configure map_location properly
-                map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
-                testmod.load_state_dict(
-                    torch.load(CHECKPOINT_PATH, map_location=map_location))
+                # CHECKPOINT_PATH = 'chkpt.pt'
+                # if rank == 0:
+                #     torch.save(testmod.state_dict(), CHECKPOINT_PATH)
+                # if rank>0: const_init(testmod)
+                # # Use a barrier() to make sure that process 1 loads the model after proces 0 saves it.
+                # dist.barrier()
+                # # configure map_location properly
+                # map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
+                # testmod.load_state_dict(
+                #     torch.load(CHECKPOINT_PATH, map_location=map_location))
 
                 #################################
 
-                testmod.eval()
+                # state_dict = ckpt['model'].float().state_dict()  # to 
+                state_dict = de_parallel(model).state_dict()
+                test_model.load_state_dict(state_dict)#, strict=False)  # load
+
+                #################################
+
+                test_model.eval()
                 with torch.no_grad():
                     for batch_i, (imgs, targets, paths, shapes) in enumerate(ddp_testloader):
                         # imgs = imgs.to(device, non_blocking=True).float() / 255.0
@@ -601,7 +613,8 @@ def train(hyp, opt, device, tb_writer=None):
                         targets = targets.to(device)
                         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
                         ## inference step ----------------------
-                        output = testmod(imgs, augment=False)[0]
+                        # output = testmod(imgs, augment=False)[0]
+                        output = test_model(imgs, augment=False)[0]
                         ## -------------------------------------
                         output = non_max_suppression(output, multi_label=False, agnostic=True)
                         output = output[0] ## only works with batch_size==1 (for now...)
@@ -791,8 +804,9 @@ def train(hyp, opt, device, tb_writer=None):
         # DDP process 0 or single-GPU
         if (rank in [-1,0] and not DDP_VAL) or (rank in [-1,0] and epoch>0 and (epoch+1)%OLD_VAL==0):
 
-            if not (epoch>0 and (epoch+1)%OLD_VAL==0):
-                continue
+            ### ONLY every N epochs...
+            # if not (epoch>0 and (epoch+1)%OLD_VAL==0):
+            #     continue
 
             pfunc(f'OLD VALIDATION !!!')
             # mAP
