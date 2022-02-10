@@ -150,7 +150,7 @@ def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, n
         iouv = torch.arange(iou_thres, 1, 0.05).to(device) # iou_thres : 0.95 : 0.05
         niou = iouv.numel()
 
-    half = True
+    half = False
 
     # state_dict = ckpt['model'].float().state_dict()  # to 
     # state_dict = de_parallel(model).state_dict()
