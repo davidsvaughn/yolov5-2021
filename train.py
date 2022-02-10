@@ -184,7 +184,7 @@ def train(hyp, opt, device, tb_writer=None):
             v.requires_grad = False
 
     ## create separate testing model
-    test_model = Model(opt.cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
+    test_model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
     for k, v in test_model.named_parameters():
         v.requires_grad = False  # freeze all layers
 
