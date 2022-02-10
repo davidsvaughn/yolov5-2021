@@ -141,7 +141,7 @@ def gather_tensors(t, device, rank, world_size, dim=6, debug=None, batch_i=-1):
 
 # @torch.no_grad()
 #            test_model, ddp_testloader, epoch, epochs, nc, rank, device, best_fitness, new_best_model
-def test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device, names, best_fitness, new_best_model):
+def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, names, best_fitness, new_best_model):
     half = False
     final_epoch = epoch + 1 == epochs
     if rank in [-1, 0]:
@@ -308,46 +308,48 @@ def test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device, names,
                 'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
                 # 'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
                 'x/lr0', 'x/lr1', 'x/lr2']  # params
-        for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
-            if tb_writer:
-                tb_writer.add_scalar(tag, x, epoch)  # tensorboard
-            if wandb_logger.wandb:
-                wandb_logger.log({tag: x})  # W&B
+        # for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
+        #     if tb_writer:
+        #         tb_writer.add_scalar(tag, x, epoch)  # tensorboard
+        #     if wandb_logger.wandb:
+        #         wandb_logger.log({tag: x})  # W&B
 
         # Update best mAP
         fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
         if fi > best_fitness:
             best_fitness = fi
-        wandb_logger.end_epoch(best_result=best_fitness == fi)
+        # wandb_logger.end_epoch(best_result=best_fitness == fi)
 
         # Save model
         if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
-            ckpt = {'epoch': epoch,
-                    'best_fitness': best_fitness,
-                    # 'training_results': results_file.read_text(),
-                    'model': deepcopy(de_parallel(model)).half(),
-                    'ema': deepcopy(ema.ema).half(),
-                    'updates': ema.updates,
-                    'optimizer': optimizer.state_dict(),
-                    'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
+            # ## Save last, best and delete
+            # ckpt = {'epoch': epoch,
+            #         'best_fitness': best_fitness,
+            #         # 'training_results': results_file.read_text(),
+            #         'model': deepcopy(de_parallel(model)).half(),
+            #         'ema': deepcopy(ema.ema).half(),
+            #         'updates': ema.updates,
+            #         'optimizer': optimizer.state_dict(),
+            #         'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
 
-            # Save last, best and delete
-            torch.save(ckpt, last)
+            # torch.save(ckpt, last)
+
             if best_fitness == fi:
                 pfunc('Saving best model!')
-                torch.save(ckpt, best)
+                # torch.save(ckpt, best)
                 new_best_model = True
-            if wandb_logger.wandb:
-                if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
-                    wandb_logger.log_model(
-                        last.parent, opt, epoch, fi, best_model=best_fitness == fi)
-            del ckpt
+
+            # if wandb_logger.wandb:
+            #     if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
+            #         wandb_logger.log_model(
+            #             last.parent, opt, epoch, fi, best_model=best_fitness == fi)
+            # del ckpt
 
         # Upload best model to s3
         if (epoch+1)%10==0 and epoch>15:
             if new_best_model:
-                strip_optimizer(best)
-                upload_model(opt)
+                # strip_optimizer(best)
+                # upload_model(opt)
                 new_best_model = False
 
     return best_fitness, new_best_model
@@ -840,7 +842,7 @@ def train(hyp, opt, device, tb_writer=None):
             state_dict = de_parallel(model).state_dict()
             test_model.load_state_dict(state_dict)#, strict=False)  # load
 
-            best_fitness, new_best_model = test_ddp(test_model, ddp_testloader, epoch, epochs, nc, rank, device, names, best_fitness, new_best_model)
+            best_fitness, new_best_model = test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, names, best_fitness, new_best_model)
 
                 #################################
 
