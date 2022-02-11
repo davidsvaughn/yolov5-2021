@@ -41,6 +41,7 @@ from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_di
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
 from utils.metrics import ap_per_class
+from test import test_ddp
 
 ## for printing GPU stats
 from pynvml import *
@@ -131,7 +132,7 @@ def gather_tensors(t, device, rank, world_size, dim=6):
     return None
 
 @torch.no_grad()
-def test_ddp(opt, test_model, testloader, rank, device, names):
+def test_ddp_local(opt, test_model, testloader, rank, device, names):
 
     if rank in [-1, 0]:
         # t1 = time.time()
