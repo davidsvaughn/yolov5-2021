@@ -424,7 +424,6 @@ def gather_tensors(t, device, rank, world_size, dim=6):
     padded_output[:my_dim,:] = t
     dist.all_gather(output_list, padded_output)
     if rank in [-1, 0]:
-        # padded_output = [x.cpu().numpy() for x in output_list]
         outputs = [x[:all_dims[j],:] for j,x in enumerate(output_list)]
         return outputs
     return None
@@ -439,7 +438,9 @@ def test_ddp(opt, test_model, testloader, rank, device, names):
         iou_thres = 0.25
         iouv = torch.arange(iou_thres, 1, 0.05).to(device) # iou_thres : 0.95 : 0.05
         niou = iouv.numel()
-
+    
+    ## for now this won't work, unless deepcopy of model is passed in from all processes
+    ## because this would reduce precision on training model as well...
     half = False
 
     #################################
@@ -447,7 +448,6 @@ def test_ddp(opt, test_model, testloader, rank, device, names):
     test_model.eval()
     if half: test_model.half()
     for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
-        # imgs = imgs.to(device, non_blocking=True).float() / 255.0
         imgs = imgs.to(device, non_blocking=True)
         imgs = imgs.half() if half else imgs.float()  # uint8 to fp16/32
         imgs /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -455,15 +455,14 @@ def test_ddp(opt, test_model, testloader, rank, device, names):
         targets = targets.to(device)
         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
         ## inference step ----------------------
-        # output = testmod(imgs, augment=False)[0]
         output = test_model(imgs, augment=False)[0]
         ## -------------------------------------
         output = non_max_suppression(output, multi_label=False, agnostic=True)
         output = output[0] ## only works with batch_size==1 (for now...)
-        ####################
 
-        all_output = gather_tensors(output, device, rank, opt.world_size)#, debug='OUTPUT', batch_i=batch_i)
-        all_targets = gather_tensors(targets, device, rank, opt.world_size)#, debug='TARGETS', batch_i=batch_i)
+        ## gather outputs from all DDP processes...
+        all_output = gather_tensors(output, device, rank, opt.world_size)
+        all_targets = gather_tensors(targets, device, rank, opt.world_size)
 
         ## imgs[0].shape
         hw = torch.tensor([height, width]).to(device)
@@ -490,7 +489,6 @@ def test_ddp(opt, test_model, testloader, rank, device, names):
             ## METRICS
             idx = []
             for si, pred in enumerate(output):
-                # pred = non_max_suppression(pred[None,:], multi_label=False, agnostic=True)[0]
                 labels = targets[targets[:, 0] == si, 1:]
                 nl = len(labels)
                 tcls = labels[:, 0].tolist() if nl else []  # target class
@@ -536,7 +534,6 @@ def test_ddp(opt, test_model, testloader, rank, device, names):
                                     detected.append(d)
                                     correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
                                     k = pi[j] ## index into pred array.....
-                                    # pred_target_dims[k,2:] = target_dims[d]
                                     if len(detected) == nl:  # all targets already located in image
                                         break
 
