@@ -113,16 +113,10 @@ def upload_model(opt):
     logger.info('All artifacts uploaded!')
 
 @torch.no_grad()
-def gather_tensors(t, device, rank, world_size, dim=6, debug=None, batch_i=-1):
+def gather_tensors(t, device, rank, world_size, dim=6):
     shape = torch.tensor(t.shape).to(device)
     out_shapes = [torch.zeros_like(shape, device=device) for _ in range(world_size)]
     dist.all_gather(out_shapes, shape)
-    if debug and rank in [-1, 0] and batch_i==0: pfunc(debug)
-    # if debug:
-    #     pfunc(debug)
-    #     if rank in [-1, 0]:
-    #         pfunc('SHAPES....')
-    #         [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
     my_dim = int(shape[0])
     all_dims = [int(x[0]) for x in out_shapes]
     max_dim = max(all_dims)
@@ -133,18 +127,14 @@ def gather_tensors(t, device, rank, world_size, dim=6, debug=None, batch_i=-1):
     if rank in [-1, 0]:
         # padded_output = [x.cpu().numpy() for x in output_list]
         outputs = [x[:all_dims[j],:] for j,x in enumerate(output_list)]
-        if debug and batch_i==0:
-            pfunc('TENSORS....')
-            [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
         return outputs
     return None
 
 @torch.no_grad()
-def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, names, best_fitness, new_best_model):
+def test_ddp(opt, test_model, testloader, rank, device, names):
 
-    final_epoch = epoch + 1 == epochs
     if rank in [-1, 0]:
-        t1 = time.time()
+        # t1 = time.time()
         stats, seen = [],0
         iou_thres = 0.25
         iouv = torch.arange(iou_thres, 1, 0.05).to(device) # iou_thres : 0.95 : 0.05
@@ -152,15 +142,11 @@ def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, n
 
     half = False
 
-    # state_dict = ckpt['model'].float().state_dict()  # to 
-    # state_dict = de_parallel(model).state_dict()
-    # test_model.load_state_dict(state_dict)#, strict=False)  # load
-
     #################################
 
     test_model.eval()
     if half: test_model.half()
-    for batch_i, (imgs, targets, paths, shapes) in enumerate(ddp_testloader):
+    for batch_i, (imgs, targets, paths, shapes) in enumerate(testloader):
         # imgs = imgs.to(device, non_blocking=True).float() / 255.0
         imgs = imgs.to(device, non_blocking=True)
         imgs = imgs.half() if half else imgs.float()  # uint8 to fp16/32
@@ -208,11 +194,6 @@ def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, n
                 s = list(t.cpu().numpy())
                 s = [[int(s[0]), int(s[1])],[s[2:4],s[4:]]]
                 shapes.append(s)
-            
-            ## debugging msgs....
-            # pfunc(f'TARGETS: {targets.shape}')
-            # [pfunc(f"TEST_BATCH_{batch_i} : output[{j}] : {x.shape}") for j,x in enumerate(output)]
-            # [pfunc(f"TEST_BATCH_{batch_i} : shapes[{j}] : {x}") for j,x in enumerate(shapes)]
 
             ## METRICS
             idx = []
@@ -272,6 +253,7 @@ def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, n
 
     if rank in [-1, 0]:
         # Compute statistics
+        nc = len(names) ## number of classes
         stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
         conf_best = -1
         ct=None
@@ -301,59 +283,13 @@ def test_ddp(opt, test_model, ddp_testloader, epoch, epochs, nc, rank, device, n
             pfunc('\nOptimal Confidence Threshold: {0:0.3f}'.format(conf_best)) #log
             if max_by_class:
                 pfunc('Optimal Confidence Thresholds (Per-Class): {}'.format(list(cc.round(3)))) #log
-        pfunc(f'DDP Validation Time: {(time.time()-t1)/60:0.2f} min')
 
-        # Logging
+        # pfunc(f'DDP Validation Time: {(time.time()-t1)/60:0.2f} min')
+
         results = (mp, mr, mf1, map50, map)#, *(loss.cpu() / len(dataloader)).tolist())
-        tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
-                'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
-                # 'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
-                'x/lr0', 'x/lr1', 'x/lr2']  # params
-        # for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
-        #     if tb_writer:
-        #         tb_writer.add_scalar(tag, x, epoch)  # tensorboard
-        #     if wandb_logger.wandb:
-        #         wandb_logger.log({tag: x})  # W&B
+        return results #, maps, times
 
-        # Update best mAP
-        fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
-        if fi > best_fitness:
-            best_fitness = fi
-        # wandb_logger.end_epoch(best_result=best_fitness == fi)
-
-        # Save model
-        if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
-            # ## Save last, best and delete
-            # ckpt = {'epoch': epoch,
-            #         'best_fitness': best_fitness,
-            #         # 'training_results': results_file.read_text(),
-            #         'model': deepcopy(de_parallel(model)).half(),
-            #         'ema': deepcopy(ema.ema).half(),
-            #         'updates': ema.updates,
-            #         'optimizer': optimizer.state_dict(),
-            #         'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
-
-            # torch.save(ckpt, last)
-
-            if best_fitness == fi:
-                pfunc('Saving best model!')
-                # torch.save(ckpt, best)
-                new_best_model = True
-
-            # if wandb_logger.wandb:
-            #     if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
-            #         wandb_logger.log_model(
-            #             last.parent, opt, epoch, fi, best_model=best_fitness == fi)
-            # del ckpt
-
-        # Upload best model to s3
-        if (epoch+1)%10==0 and epoch>15:
-            if new_best_model:
-                # strip_optimizer(best)
-                # upload_model(opt)
-                new_best_model = False
-
-    return best_fitness, new_best_model
+    return None
 
 def train(hyp, opt, device, tb_writer=None):
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
@@ -535,11 +471,10 @@ def train(hyp, opt, device, tb_writer=None):
     nb = len(trainloader)  # number of batches
     assert mlc < nc, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, nc, opt.data, nc - 1)
 
-
     # Testloader
     # test_batch_size = batch_size
     test_batch_size = 1 ## so test_batch_size-per-GPU = 1 (needed for DDP validation)
-    ddp_testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,
+    testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,
                                     hyp=hyp, cache=opt.cache_images and not opt.notest,
                                     cache_efficient_sampling=True, drop_last=False, shuffle=False,
                                     rect=True, rank=rank,
@@ -548,12 +483,12 @@ def train(hyp, opt, device, tb_writer=None):
     # Process 0
     new_best_model = False
     if rank in [-1, 0]:
-        # test_batch_size = batch_size
-        orig_testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,
-                                            hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
-                                            world_size=opt.world_size, workers=opt.workers,
-                                            # lazy_caching=True,
-                                            pad=0.5, prefix=colorstr('val: '))[0]
+        # orig_testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,
+        #                                     hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
+        #                                     world_size=opt.world_size, workers=opt.workers,
+        #                                     # lazy_caching=True,
+        #                                     pad=0.5, prefix=colorstr('val: '))[0]
+
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
             c = torch.tensor(labels[:, 0])  # classes
@@ -600,18 +535,18 @@ def train(hyp, opt, device, tb_writer=None):
         logger.info('Stepping lr_scheduler forward {} epochs...'.format(init_epochs))
     for i in range(init_epochs-1):
         scheduler.step()
-    if init_epochs>0 and rank in [-1, 0]:  # check initial model performance....
-        test.test(opt.data,
-                batch_size=test_batch_size,
-                imgsz=imgsz_test,
-                model=ema.ema,
-                single_cls=opt.single_cls,
-                dataloader=orig_testloader,
-                save_dir=save_dir,
-                verbose=True,
-                plots=False,
-                log_imgs=opt.log_imgs if wandb else 0,
-                compute_loss=compute_loss)
+    # if init_epochs>0 and rank in [-1, 0]:  # check initial model performance....
+    #     test.test(opt.data,
+    #             batch_size=test_batch_size,
+    #             imgsz=imgsz_test,
+    #             model=ema.ema,
+    #             single_cls=opt.single_cls,
+    #             dataloader=orig_testloader,
+    #             save_dir=save_dir,
+    #             verbose=True,
+    #             plots=False,
+    #             log_imgs=opt.log_imgs if wandb else 0,
+    #             compute_loss=compute_loss)
     ###########################################################################
 
     pfunc(f'Image sizes {imgsz} train, {imgsz_test} test\n'
@@ -736,14 +671,7 @@ def train(hyp, opt, device, tb_writer=None):
                                                   save_dir.glob('train*.jpg') if x.exists()]})
 
             # end batch ------------------------------------------------------------------------------------------------
-
         # end epoch ----------------------------------------------------------------------------------------------------
-
-        # logging.StreamHandler.terminator = "\n"
-        if rank in [-1, 0]:
-            pfunc(('     ' + '%10s' * 3) % ('total_min', 'gpu_mem', 'imgs_sec'))
-            pfunc(('     ' + '%10.2f' + '%10s' + '%10.4g') % ( ((time.time()-t1)/60), mem, imgs_sec))
-            # pfunc(f'num_img={num_img} opt.world_size={opt.world_size}')
 
         # if (epoch+1)%10==0:
         #     gc.collect()
@@ -754,388 +682,87 @@ def train(hyp, opt, device, tb_writer=None):
         lr = [x['lr'] for x in optimizer.param_groups]  # for tensorboard
         scheduler.step()
 
+        # logging.StreamHandler.terminator = "\n"
+        if rank in [-1, 0]:
+            pfunc(('     ' + '%10s' * 3) % ('total_min', 'gpu_mem', 'imgs_sec'))
+            pfunc(('     ' + '%10.2f' + '%10s' + '%10.4g') % ( ((time.time()-t1)/60), mem, imgs_sec))
+            t1 = time.time()
+            final_epoch = epoch + 1 == epochs
 
-        ################################################################
+        ##################################################################################
         ## DDP VALIDATION....
-        if DDP_VAL:
+        # results = (mp, mr, mf1, map50, map)#, *(loss.cpu() / len(dataloader)).tolist())
 
-            ### ONLY every N epochs...
-            # if not (epoch>0 and (epoch+1)%OLD_VAL==0):
-            #     continue
+        results = test_ddp(opt, 
+                            de_parallel(model), 
+                            testloader, 
+                            rank, 
+                            device, 
+                            names,
+                            )   
 
-            # @torch.no_grad()
-            # def gather_tensors(t, device, rank, world_size, dim=6, debug=None, batch_i=-1):
-            #     shape = torch.tensor(t.shape).to(device)
-            #     out_shapes = [torch.zeros_like(shape, device=device) for _ in range(world_size)]
-            #     dist.all_gather(out_shapes, shape)
-            #     if debug and rank in [-1, 0] and batch_i==0: pfunc(debug)
-            #     # if debug:
-            #     #     pfunc(debug)
-            #     #     if rank in [-1, 0]:
-            #     #         pfunc('SHAPES....')
-            #     #         [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {d}") for j,d in enumerate(out_shapes)]
-            #     my_dim = int(shape[0])
-            #     all_dims = [int(x[0]) for x in out_shapes]
-            #     max_dim = max(all_dims)
-            #     output_list = [torch.zeros([max_dim,dim], device=device) for _ in range(world_size)]
-            #     padded_output = torch.zeros([max_dim,dim], device=device)
-            #     padded_output[:my_dim,:] = t
-            #     dist.all_gather(output_list, padded_output)
-            #     if rank in [-1, 0]:
-            #         # padded_output = [x.cpu().numpy() for x in output_list]
-            #         outputs = [x[:all_dims[j],:] for j,x in enumerate(output_list)]
-            #         if debug and batch_i==0:
-            #             pfunc('TENSORS....')
-            #             [pfunc(f"TEST_BATCH_{batch_i} : rank_{j}: {x.shape}") for j,x in enumerate(outputs)]
-            #         return outputs
-            #     return None
+        if rank in [-1, 0]:
+            pfunc(f'Validation Time: {(time.time()-t1)/60:0.2f} min')
 
-            # try:
-            # if True:
-                #################################
-                # half = False
-                # final_epoch = epoch + 1 == epochs
-                # if rank in [-1, 0]:
-                #     t1 = time.time()
-                #     stats, seen = [],0
-                #     iou_thres = 0.25
-                #     iouv = torch.arange(iou_thres, 1, 0.05).to(device) # iou_thres : 0.95 : 0.05
-                #     niou = iouv.numel()
-                #################################
-                # if ema:
-                #     ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
-                #     testmod=ema.ema
-                # else:
-                #     testmod = model
-                # testmod = deepcopy(de_parallel(model))
-                # testmod.eval()
-                # model.eval()
+            # Logging
+            tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
+                    'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
+                    # 'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
+                    'x/lr0', 'x/lr1', 'x/lr2']  # params
+            for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
+                if tb_writer:
+                    tb_writer.add_scalar(tag, x, epoch)  # tensorboard
+                if wandb_logger.wandb:
+                    wandb_logger.log({tag: x})  # W&B
 
-                # def const_init(model, c=0.000001):
-                #     for name, param in model.named_parameters():
-                #         param.data.fill_(c)
+            # Update best fitness
+            # fitness = weighted combination of [P, R, F1, mAP@0.25, mAP@0.25:0.95]
+            fi = fitness(np.array(results).reshape(1, -1))
+            if fi > best_fitness:
+                best_fitness = fi
+            wandb_logger.end_epoch(best_result=best_fitness == fi)
 
-                ##########################################################################################################
-                # ## [https://pytorch.org/tutorials/intermediate/ddp_tutorial.html]
-                # # Now, let’s create a toy module, wrap it with DDP, and feed it with some dummy input data. 
-                # # Please note, as DDP broadcasts model states from rank 0 process to all other processes in the DDP constructor, 
-                # # you don’t need to worry about different DDP processes start from different model parameter initial values.
-                # testmod = deepcopy(de_parallel(model)) # if rank==0 else None
-                # # if rank>0: const_init(testmod)
-                # testmod = DDP(testmod, device_ids=[rank], #output_device=opt.local_rank,
-                #             # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
-                #             find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.module.modules()))
+            # Save model
+            if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
+                ckpt = {'epoch': epoch,
+                        'best_fitness': best_fitness,
+                        # 'training_results': results_file.read_text(),
+                        'model': deepcopy(de_parallel(model)).half(),
+                        'ema': deepcopy(ema.ema).half(),
+                        'updates': ema.updates,
+                        'optimizer': optimizer.state_dict(),
+                        'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
+
+                # Save last, best and delete
+                torch.save(ckpt, last)
+                if best_fitness == fi:
+                    pfunc('Saving best model!')
+                    torch.save(ckpt, best)
+                    new_best_model = True
+                    best_model_msg = f'Best Model: Epoch {epoch+1}, mF1={results[2]:0.3f}, mAP@0.25:0.95={results[4]:0.3f}'
+
+                if wandb_logger.wandb:
+                    if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
+                        wandb_logger.log_model(
+                            last.parent, opt, epoch, fi, best_model=best_fitness == fi)
+                del ckpt
+
+            # Upload best model to s3
+            if (epoch+1)%10==0 and epoch>15:
+                if new_best_model:
+                    strip_optimizer(best)
+                    upload_model(opt)
+                    new_best_model = False
                 
-                # CHECKPOINT_PATH = 'chkpt.pt'
-                # if rank == 0:
-                #     torch.save(testmod.state_dict(), CHECKPOINT_PATH)
-                # if rank>0: const_init(testmod)
-                # # Use a barrier() to make sure that process 1 loads the model after proces 0 saves it.
-                # dist.barrier()
-                # # configure map_location properly
-                # map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
-                # testmod.load_state_dict(
-                #     torch.load(CHECKPOINT_PATH, map_location=map_location))
-
-                #################################
-
-                # state_dict = ckpt['model'].float().state_dict()  # to 
-            # state_dict = de_parallel(model).state_dict()
-            # test_model.load_state_dict(state_dict)#, strict=False)  # load
-            # testmod = test_model
-            # testmod = de_parallel(model)
-
-            best_fitness, new_best_model = test_ddp(opt, de_parallel(model), ddp_testloader, 
-                                                    epoch, epochs, nc, rank, device, 
-                                                    names, best_fitness, new_best_model)
-
-                #################################
-
-                # test_model.eval()
-                # with torch.no_grad():
-                #     for batch_i, (imgs, targets, paths, shapes) in enumerate(ddp_testloader):
-                #         # imgs = imgs.to(device, non_blocking=True).float() / 255.0
-                #         imgs = imgs.to(device, non_blocking=True)
-                #         imgs = imgs.half() if half else imgs.float()  # uint8 to fp16/32
-                #         imgs /= 255.0  # 0 - 255 to 0.0 - 1.0
-                #         nb, _, height, width = imgs.shape  # batch size, channels, height, width
-                #         targets = targets.to(device)
-                #         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
-                #         ## inference step ----------------------
-                #         # output = testmod(imgs, augment=False)[0]
-                #         output = test_model(imgs, augment=False)[0]
-                #         ## -------------------------------------
-                #         output = non_max_suppression(output, multi_label=False, agnostic=True)
-                #         output = output[0] ## only works with batch_size==1 (for now...)
-                #         ####################
-
-                #         all_output = gather_tensors(output, device, rank, opt.world_size, debug='OUTPUT', batch_i=batch_i)
-                #         all_targets = gather_tensors(targets, device, rank, opt.world_size)#, debug='TARGETS', batch_i=batch_i)
-
-                #         ## imgs[0].shape
-                #         hw = torch.tensor([height, width]).to(device)
-                #         all_hw = [torch.zeros_like(hw, device=device) for _ in range(opt.world_size)]
-                #         dist.all_gather(all_hw, hw)
-
-                #         ## shapes
-                #         s = shapes[0]
-                #         t = torch.tensor(s[0] + s[1][0] + s[1][1]).to(device)
-                #         all_shapes = [torch.zeros_like(t, device=device) for _ in range(opt.world_size)]
-                #         dist.all_gather(all_shapes, t)
-
-                #         if rank in [-1, 0]:
-                #             ## debugging.......
-                #             if DEBUG and batch_i==0:
-                #                 print('DDP OUTPUT[0] -----------------')
-                #                 print(all_output[0])
-                #                 # print('DDP TARGETS[0] -----------------')
-                #                 # print(all_targets[0])
-
-                #             ###################
-                #             output = all_output
-                #             for j,targets in enumerate(all_targets):
-                #                 targets[:,0] = j ## restore indices
-                #             targets = torch.cat(all_targets, 0)
-                #             shapes = []
-                #             for t in all_shapes:
-                #                 s = list(t.cpu().numpy())
-                #                 s = [[int(s[0]), int(s[1])],[s[2:4],s[4:]]]
-                #                 shapes.append(s)
-                            
-                #             ## debugging msgs....
-                #             # pfunc(f'TARGETS: {targets.shape}')
-                #             # [pfunc(f"TEST_BATCH_{batch_i} : output[{j}] : {x.shape}") for j,x in enumerate(output)]
-                #             # [pfunc(f"TEST_BATCH_{batch_i} : shapes[{j}] : {x}") for j,x in enumerate(shapes)]
-
-                #             ## METRICS
-                #             idx = []
-                #             for si, pred in enumerate(output):
-                #                 # pred = non_max_suppression(pred[None,:], multi_label=False, agnostic=True)[0]
-                #                 labels = targets[targets[:, 0] == si, 1:]
-                #                 nl = len(labels)
-                #                 tcls = labels[:, 0].tolist() if nl else []  # target class
-                #                 # path = Path(paths[si])
-                #                 seen += 1
-                #                 if len(pred) == 0:
-                #                     idx.append(None)
-                #                     if nl:
-                #                         stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
-                #                     continue
-
-                #                 idx.append(None)
-                #                 predn = pred.clone()
-                #                 scale_coords(all_hw[si], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
-
-                #                 # Assign all predictions as incorrect
-                #                 correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool, device=device)
-                #                 if nl:
-                #                     detected = []  # target indices
-                #                     tcls_tensor = labels[:, 0]
-
-                #                     # target boxes
-                #                     tbox = xywh2xyxy(labels[:, 1:5])
-                #                     scale_coords(all_hw[si], tbox, shapes[si][0], shapes[si][1])  # native-space labels
-                #                     # if plots: confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1))
-
-                #                     # Per target class
-                #                     for cls in torch.unique(tcls_tensor):
-                #                         ti = (cls == tcls_tensor).nonzero(as_tuple=False).view(-1)  # target indices
-                #                         pi = (cls == pred[:, 5]).nonzero(as_tuple=False).view(-1)  # prediction indices
-
-                #                         # Search for detections
-                #                         if pi.shape[0]:
-                #                             # Prediction to target ious
-                #                             ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1)  # best ious, indices
-
-                #                             # Append detections
-                #                             detected_set = set()
-                #                             for j in (ious > iouv[0]).nonzero(as_tuple=False):
-                #                                 d = ti[i[j]]  # detected target... index into target array....
-                #                                 if d.item() not in detected_set:
-                #                                     detected_set.add(d.item())
-                #                                     detected.append(d)
-                #                                     correct[pi[j]] = ious[j] > iouv  # iou_thres is 1xn
-                #                                     k = pi[j] ## index into pred array.....
-                #                                     # pred_target_dims[k,2:] = target_dims[d]
-                #                                     if len(detected) == nl:  # all targets already located in image
-                #                                         break
-
-                #                 # Append statistics (correct, conf, pcls, tcls)
-                #                 stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))       
-
-                # if rank in [-1, 0]:
-                #     # Compute statistics
-                #     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
-                #     conf_best = -1
-                #     ct=None
-                #     max_by_class=True
-                #     conf_thres=-1
-                #     if len(stats) and stats[0].any():
-                #         mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats, max_by_class=max_by_class, conf_thres=conf_thres)
-                #     else:
-                #         nt = torch.zeros(1)
-                #     # Print results
-                #     pfunc('------------------------------------------- Validation Set -----------------------------------------------')
-                #     fmt = '%{}s'.format(2+max([len(s) for s in names]))
-                #     s = (fmt + '%12s' * 7) % ('Class', 'Images', 'Targets', 'P', 'R', 'F1', 'mAP@.5', 'mAP@.5:.95')
-                #     pfunc(s)
-                #     pf = fmt + '%12.3g' * 7  # print format
-                #     # Print results per class
-                #     if nc < 50 and nc > 1 and len(stats):
-                #         for i, c in enumerate(ap_class):
-                #             pfunc(pf % (names[c], seen, nt[c], p[i], r[i], f1[i], ap50[i], ap[i])) #log
-                #     ## Print averages
-                #     if nc>1:
-                #         pfunc('')
-                #         pfunc(pf % ('AVG', seen, nt.sum(), p.mean(), r.mean(), f1.mean(), ap50.mean(), ap.mean())) ## unweighted average
-                #     ss = 'WEIGHTED AVG' if nc>1 else names[0]
-                #     pfunc(pf % (ss, seen, nt.sum(), mp, mr, mf1, map50, map)) ## weighted average (if nc>1)
-                #     if conf_best>-1:
-                #         pfunc('\nOptimal Confidence Threshold: {0:0.3f}'.format(conf_best)) #log
-                #         if max_by_class:
-                #             pfunc('Optimal Confidence Thresholds (Per-Class): {}'.format(list(cc.round(3)))) #log
-                #     pfunc(f'DDP Validation Time: {(time.time()-t1)/60:0.2f} min')
-
-                #     # Logging
-                #     results = (mp, mr, mf1, map50, map)#, *(loss.cpu() / len(dataloader)).tolist())
-                #     tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
-                #             'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
-                #             # 'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
-                #             'x/lr0', 'x/lr1', 'x/lr2']  # params
-                #     for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
-                #         if tb_writer:
-                #             tb_writer.add_scalar(tag, x, epoch)  # tensorboard
-                #         if wandb_logger.wandb:
-                #             wandb_logger.log({tag: x})  # W&B
-
-                #     # Update best mAP
-                #     fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
-                #     if fi > best_fitness:
-                #         best_fitness = fi
-                #     wandb_logger.end_epoch(best_result=best_fitness == fi)
-
-                #     # Save model
-                #     if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
-                #         ckpt = {'epoch': epoch,
-                #                 'best_fitness': best_fitness,
-                #                 # 'training_results': results_file.read_text(),
-                #                 'model': deepcopy(de_parallel(model)).half(),
-                #                 'ema': deepcopy(ema.ema).half(),
-                #                 'updates': ema.updates,
-                #                 'optimizer': optimizer.state_dict(),
-                #                 'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
-
-                #         # Save last, best and delete
-                #         torch.save(ckpt, last)
-                #         if best_fitness == fi:
-                #             pfunc('Saving best model!')
-                #             torch.save(ckpt, best)
-                #             new_best_model = True
-                #         if wandb_logger.wandb:
-                #             if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
-                #                 wandb_logger.log_model(
-                #                     last.parent, opt, epoch, fi, best_model=best_fitness == fi)
-                #         del ckpt
-
-                #     # Upload best model to s3
-                #     if (epoch+1)%10==0 and epoch>15:
-                #         if new_best_model:
-                #             strip_optimizer(best)
-                #             upload_model(opt)
-                #             new_best_model = False
-
-            # except Exception as e:
-            #     pfunc('DDP VALIDATION RUN FAILURE:'+ str(e))
+            pfunc(best_model_msg)
 
         ## END DDP VALIDATION
         ################################################################
 
-        # DDP process 0 or single-GPU
-        if (rank in [-1,0] and not DDP_VAL) or (rank in [-1,0] and epoch>0 and (epoch+1)%OLD_VAL==0):
-
-            ### ONLY every N epochs...
-            # if not (epoch>0 and (epoch+1)%OLD_VAL==0):
-            #     continue
-
-            pfunc(f'OLD VALIDATION !!!')
-            # mAP
-            ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
-            final_epoch = epoch + 1 == epochs
-            try:
-                if not opt.notest or final_epoch:  # Calculate mAP
-                    t1 = time.time()
-                    wandb_logger.current_epoch = epoch + 1
-                    results, maps, times = test.test(data_dict, batch_size=test_batch_size, imgsz=imgsz_test, single_cls=opt.single_cls, 
-                                                    dataloader=orig_testloader, save_dir=save_dir, verbose=nc < 50 and final_epoch,
-                                                    plots=plots and final_epoch, wandb_logger=wandb_logger, compute_loss=compute_loss, DEBUG=DEBUG,
-
-                                                    # model=ema.ema,
-                                                    model=model,
-
-                                                    # half_precision=True,### ???????????
-                                                    half_precision=False,### ???????????
-                                                    )
-
-                    pfunc(f'Old Validation Time: {(time.time()-t1)/60:0.2f} min')
-
-                if not DDP_VAL:
-                    # Write
-                    with open(results_file, 'a') as f:
-                        f.write('%10.4g' * 8 % results + '\n')  # append metrics, val_loss
-                    # Log
-                    tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
-                            'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
-                            'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
-                            'x/lr0', 'x/lr1', 'x/lr2']  # params
-                    for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
-                        if tb_writer:
-                            tb_writer.add_scalar(tag, x, epoch)  # tensorboard
-                        if wandb_logger.wandb:
-                            wandb_logger.log({tag: x})  # W&B
-
-                    # Update best mAP
-                    fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
-                    if fi > best_fitness:
-                        best_fitness = fi
-                    wandb_logger.end_epoch(best_result=best_fitness == fi)
-
-                    # Save model
-                    if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
-                        ckpt = {'epoch': epoch,
-                                'best_fitness': best_fitness,
-                                'training_results': results_file.read_text(),
-                                'model': deepcopy(de_parallel(model)).half(),
-                                'ema': deepcopy(ema.ema).half(),
-                                'updates': ema.updates,
-                                'optimizer': optimizer.state_dict(),
-                                'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
-
-                        # Save last, best and delete
-                        torch.save(ckpt, last)
-                        if best_fitness == fi:
-                            pfunc('Saving best model!')
-                            torch.save(ckpt, best)
-                            new_best_model = True
-                        if wandb_logger.wandb:
-                            if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
-                                wandb_logger.log_model(
-                                    last.parent, opt, epoch, fi, best_model=best_fitness == fi)
-                        del ckpt
-
-                    # Upload best model to s3
-                    if (epoch+1)%10==0 and epoch>15:
-                        if new_best_model:
-                            strip_optimizer(best)
-                            upload_model(opt)
-                            new_best_model = False
-
-            except Exception as e:
-                pfunc('OLD VALIDATION RUN FAILURE:'+ str(e))
-
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training =====================================================================================================
     if rank in [-1, 0]:
-        # Plots
+        # ## Plots
         # if plots:
         #     plot_results(save_dir=save_dir)  # save as results.png
         #     if wandb_logger.wandb:
@@ -1143,35 +770,36 @@ def train(hyp, opt, device, tb_writer=None):
         #         wandb_logger.log({"Results": [wandb_logger.wandb.Image(str(save_dir / f), caption=f) for f in files
         #                                       if (save_dir / f).exists()]})
         
-        # Test best.pt
-        pfunc('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
-        # if opt.data.endswith('coco.yaml') and nc == 80:  # if COCO
-        for m in [best] if best.exists() else [last]:  # speed, mAP tests
-            results, _, _ = test.test(data_dict,
-                                        batch_size=test_batch_size,
-                                        imgsz=imgsz_test,
-                                        model=attempt_load(m, device),#.half(),
-                                        single_cls=opt.single_cls,
-                                        dataloader=orig_testloader,
-                                        save_dir=save_dir,
-                                        # verbose=nc < 50 and final_epoch,
-                                        # plots=plots and final_epoch,
-                                        wandb_logger=wandb_logger,
-                                        plots=False,
-                                        # compute_loss=compute_loss,
-                                        )
+        # ## Test best.pt
+        # pfunc('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
+        # # if opt.data.endswith('coco.yaml') and nc == 80:  # if COCO
+        # for m in [best] if best.exists() else [last]:  # speed, mAP tests
+        #     results, _, _ = test.test(data_dict,
+        #                                 batch_size=test_batch_size,
+        #                                 imgsz=imgsz_test,
+        #                                 model=attempt_load(m, device),#.half(),
+        #                                 single_cls=opt.single_cls,
+        #                                 dataloader=orig_testloader,
+        #                                 save_dir=save_dir,
+        #                                 # verbose=nc < 50 and final_epoch,
+        #                                 # plots=plots and final_epoch,
+        #                                 wandb_logger=wandb_logger,
+        #                                 plots=False,
+        #                                 # compute_loss=compute_loss,
+        #                                 )
 
-        # Strip optimizers
-        final = best if best.exists() else last  # final model
-        for f in last, best:
-            if f.exists():
-                strip_optimizer(f)  # strip optimizers
-        if opt.bucket:
-            os.system(f'gsutil cp {final} gs://{opt.bucket}/weights')  # upload
-        if wandb_logger.wandb and not opt.evolve:  # Log the stripped model
-            wandb_logger.wandb.log_artifact(str(final), type='model',
-                                            name='run_' + wandb_logger.wandb_run.id + '_model',
-                                            aliases=['latest', 'best', 'stripped'])
+        # ## Strip optimizers
+        # final = best if best.exists() else last  # final model
+        # for f in last, best:
+        #     if f.exists():
+        #         strip_optimizer(f)  # strip optimizers
+        # if opt.bucket:
+        #     os.system(f'gsutil cp {final} gs://{opt.bucket}/weights')  # upload
+        # if wandb_logger.wandb and not opt.evolve:  # Log the stripped model
+        #     wandb_logger.wandb.log_artifact(str(final), type='model',
+        #                                     name='run_' + wandb_logger.wandb_run.id + '_model',
+        #                                     aliases=['latest', 'best', 'stripped'])
+
         wandb_logger.finish_run()
     else:
         dist.destroy_process_group()
