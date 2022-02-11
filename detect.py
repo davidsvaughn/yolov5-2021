@@ -87,18 +87,21 @@ class FileIterator:
         return path
 
 class YoloModel:
-    def __init__(self, weights_path, scale, conf_thres, iou_thres, device, cct, opt=None):
+    def __init__(self, weights_path, scale, conf_thres, iou_thres, device, cct, sem_classes=None, sem_conf_thres=0.1, sem_iou_thres=0.1, opt=None):
         self.weights_path = weights_path
         self.scale = scale
         self.conf_thres = conf_thres
         self.iou_thres = iou_thres
+        self.sem_classes = sem_classes
+        self.sem_conf_thres = sem_conf_thres
+        self.sem_iou_thres = sem_iou_thres
         self.device = device
         self.half = self.device.type != 'cpu'  # half precision only supported on CUDA
         if cct is not None: ## class confidence thresholds
             cct = ast.literal_eval(cct)
             cct = None if len(cct)==0 else torch.from_numpy(np.array(cct)).to(device)
         self.cct = cct
-        self.opt = opt
+        # self.opt = opt
         self.init_model()
 
     def init_model(self):
@@ -116,15 +119,15 @@ class YoloModel:
     def run(self, img, classes=None):
         preds = self.model(img)[0] # augment=opt.augment
 
-        if self.opt.sem_classes is None: ## default --> normal one-shot NMS
+        if self.sem_classes is None: ## default --> normal one-shot NMS
             pred = non_max_suppression(preds, self.conf_thres, self.iou_thres, classes, cct=self.cct)
         else: ## split NMS between normal object classes and semantic classes (roads, fences, rivers, etc...)
             nc = preds.shape[2] - 5  ## get total number of classes
-            obj_classes = list(set(np.arange(nc)) - set(self.opt.sem_classes)) ## list normal object classes
+            obj_classes = list(set(np.arange(nc)) - set(self.sem_classes)) ## list normal object classes
             ## get normal object predictions
             pred_obj = non_max_suppression(preds, self.conf_thres, self.iou_thres, classes=obj_classes, cct=self.cct)
             ## get semantic class predictions
-            pred_sem = non_max_suppression(preds, self.opt.sem_conf_thres, self.opt.sem_iou_thres, classes=self.opt.sem_classes, cct=self.cct)
+            pred_sem = non_max_suppression(preds, self.sem_conf_thres, self.sem_iou_thres, classes=self.sem_classes, cct=self.cct)
             ## recombine predictions
             pred = torch.cat((pred_obj[0], pred_sem[0]), 0)
             pred = [pred]
@@ -132,14 +135,31 @@ class YoloModel:
         return pred
 
 class Detector:
-    def __init__(self, opt):
-        self.classes = opt.classes
-        self.device = select_device(opt.device)
+    def __init__(self, 
+                weights=None, 
+                img_size=None, 
+                conf_thres=None, 
+                iou_thres=None, 
+                device=None, 
+                classes=None, 
+                categories_path=None, 
+                cct=None, 
+                sem_classes=None, 
+                sem_conf_thres=0.1, 
+                sem_iou_thres=0.1,
+                opt=None):
+
+        if opt is not None:
+            weights, img_size, conf_thres, iou_thres, device, classes, categories_path, cct, sem_classes, sem_conf_thres, sem_iou_thres = \
+                opt.weights, opt.img_size, opt.conf_thres, opt.iou_thres, opt.device, opt.classes, opt.categories_path, opt.cct, opt.sem_classes, opt.sem_conf_thres, opt.sem_iou_thres
+
+        self.classes = classes
+        self.device = select_device(device)
         self.half = self.device.type != 'cpu'
-        self.model, self.stride, self.scale = self.init_model(opt.weights, opt.img_size, opt.conf_thres, opt.iou_thres, opt.cct, opt)
+        self.model, self.stride, self.scale = self.init_model(weights, img_size, conf_thres, iou_thres, cct, sem_classes, sem_conf_thres, sem_iou_thres, opt)
 
         # Load the categories/class-names
-        categories_path = opt.categories
+        categories_path = categories
         if categories_path is not None:
             with open(categories_path) as categories_file:
                 categories_json = json.load(categories_file)['categories']
@@ -149,8 +169,8 @@ class Detector:
         else:
             self.names = self.model.names
 
-    def init_model(self, weights, img_size, conf_thres, iou_thres, cct, opt):
-        model = YoloModel(weights, img_size, conf_thres, iou_thres, self.device, cct, opt)
+    def init_model(self, weights, img_size, conf_thres, iou_thres, cct, sem_classes, sem_conf_thres, sem_iou_thres, opt=None):
+        model = YoloModel(weights, img_size, conf_thres, iou_thres, self.device, cct, sem_classes, sem_conf_thres, sem_iou_thres, opt)
         return model, model.stride, model.scale
     
     def detect(self, img_file):
@@ -173,7 +193,7 @@ class Detector:
                 detections.append((xywh, xyxy, conf, cls))
         return detections, img0
     
-    def get_detections(self, img_file, opt=None):
+    def get_detections(self, img_file):
         return self.detect(img_file)
 
     def format_labels(self, xywh, cls, conf, opt):
@@ -239,11 +259,28 @@ class Detector:
                 cv2.imwrite(save_path, img0)
 
 class ThermalDetector(Detector):
-    def __init__(self, opt, PA_mode=False):
-        super(ThermalDetector, self).__init__(opt)
+    def __init__(self, 
+                weights=None, 
+                img_size=None, 
+                conf_thres=None, 
+                iou_thres=None, 
+                hweights=None, 
+                hconf_thres=0.5, 
+                hiou_thres=0.2, 
+                device=None, 
+                classes=None, 
+                categories_path=None, 
+                cct=None, 
+                opt=None, 
+                PA_mode=False):
+
+        super(ThermalDetector, self).__init__(weights, img_size, conf_thres, iou_thres, device, classes, categories_path, cct, opt)
+        if opt is not None:
+            hweights, img_size, hconf_thres, hiou_thres, cct = opt.hweights, opt.img_size, opt.hconf_thres, opt.hiou_thres, opt.cct
+
         self.PA_mode = PA_mode
         ## initialize hotspot model...
-        self.hmodel, _, _ = self.init_model(opt.hweights, opt.img_size, opt.hconf_thres, opt.hiou_thres, cct=None)
+        self.hmodel, _, _ = self.init_model(hweights, img_size, hconf_thres, hiou_thres, cct, opt)
         ## if coming from inference stack, supply categories file with "Hotspot" already at the end
         if not PA_mode:
             self.names.append('Hotspot') ## add extra label for Hotspot class
@@ -357,14 +394,17 @@ def detect(opt):
     opt.save_img = not opt.nosave
 
     if opt.hotspot:
-        detector = ThermalDetector(opt)
+        detector = ThermalDetector(opt=opt)
+        ## below is how model is created in ai_docker/inference...
         # detector = ThermalDetector(opt.weights, img_size=opt.img_size, conf_thres=opt.conf_thres, iou_thres=opt.iou_thres, 
         #                             hweights=opt.hotspot, hconf_thres=opt.hconf_thres, hiou_thres=opt.hiou_thres,
         #                             device=opt.device, classes=opt.classes, categories_path=opt.categories, cct=opt.cct)
     else:
-        detector = Detector(opt)
+        detector = Detector(opt=opt)
+        ## below is how model is created in ai_docker/inference...
         # detector = Detector(opt.weights, img_size=opt.img_size, conf_thres=opt.conf_thres, iou_thres=opt.iou_thres, 
-        #                     device=opt.device, classes=opt.classes, categories_path=opt.categories, cct=opt.cct)
+        #                     device=opt.device, classes=opt.classes, categories_path=opt.categories, cct=opt.cct,
+        #                     opt.sem_classes, opt.sem_conf_thres, opt.sem_iou_thres)
 
     t0 = time.time()
     detector.run_detections(opt)
