@@ -147,11 +147,36 @@ class Detector:
                 sem_classes=None, 
                 sem_conf_thres=0.1, 
                 sem_iou_thres=0.1,
+                yolargs=None,
                 opt=None):
 
         if opt is not None:
             weights, img_size, conf_thres, iou_thres, device, classes, categories_path, cct, sem_classes, sem_conf_thres, sem_iou_thres = \
                 opt.weights, opt.img_size, opt.conf_thres, opt.iou_thres, opt.device, opt.classes, opt.categories_path, opt.cct, opt.sem_classes, opt.sem_conf_thres, opt.sem_iou_thres
+        
+        ## parse yolargs parameters....
+        try:
+            if yolargs is not None and len(yolargs)>0:
+                ## yolargs should evaluate to a python dict()
+                yolargs = ast.literal_eval(yolargs)
+                if 'scale' in yolargs:
+                    img_size = yolargs['scale']
+                if 'threshold' in yolargs:
+                    conf_thres = yolargs['threshold']
+                if 'conf_thres' in yolargs:
+                    conf_thres = yolargs['conf_thres']
+                if 'iou_thres' in yolargs:
+                    iou_thres = yolargs['iou_thres']
+                if 'sem_conf_thres' in yolargs:
+                    sem_conf_thres = yolargs['sem_conf_thres']
+                if 'sem_iou_thres' in yolargs:
+                    sem_iou_thres = yolargs['sem_iou_thres']
+                if 'sem_classes' in yolargs:
+                    sem_classes = yolargs['sem_classes']
+                if 'cct' in yolargs:
+                    cct = yolargs['cct']
+        except:
+            print(f'ERROR: problem parsing yolargs string: {yolargs}')
 
         self.classes = classes
         self.device = select_device(device)
@@ -159,7 +184,7 @@ class Detector:
         self.model, self.stride, self.scale = self.init_model(weights, img_size, conf_thres, iou_thres, cct, sem_classes, sem_conf_thres, sem_iou_thres, opt)
 
         # Load the categories/class-names
-        categories_path = categories
+        # categories_path = categories
         if categories_path is not None:
             with open(categories_path) as categories_file:
                 categories_json = json.load(categories_file)['categories']
@@ -271,12 +296,27 @@ class ThermalDetector(Detector):
                 classes=None, 
                 categories_path=None, 
                 cct=None, 
-                opt=None, 
+                opt=None,
+                yolargs=None, 
                 PA_mode=False):
 
-        super(ThermalDetector, self).__init__(weights, img_size, conf_thres, iou_thres, device, classes, categories_path, cct, opt)
+        super(ThermalDetector, self).__init__(weights, img_size, conf_thres, iou_thres, device, classes, categories_path, cct, opt, yolargs)
         if opt is not None:
             hweights, img_size, hconf_thres, hiou_thres, cct = opt.hweights, opt.img_size, opt.hconf_thres, opt.hiou_thres, opt.cct
+
+        ## parse yolargs parameters....
+        try:
+            if yolargs is not None and len(yolargs)>0:
+                ## yolargs should evaluate to a python dict()
+                yolargs = ast.literal_eval(yolargs)
+                if 'scale' in yolargs:
+                    img_size = yolargs['scale']
+                if 'hconf_thres' in yolargs:
+                    hconf_thres = yolargs['hconf_thres']
+                if 'hiou_thres' in yolargs:
+                    hiou_thres = yolargs['hiou_thres']
+        except:
+            print(f'ERROR: problem parsing yolargs string: {yolargs}')
 
         self.PA_mode = PA_mode
         ## initialize hotspot model...
