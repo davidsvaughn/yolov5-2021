@@ -85,12 +85,14 @@ def upload_model(opt):
     if s3_client is None:
         s3_client = boto3.client("s3")
 
+    ## upload best weights...
     if len(opt.weights_path)>0 and os.path.exists(opt.weights_path):
         logger.info(f"Uploading {opt.weights_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/weights.pt")
         s3_client.upload_file(opt.weights_path, opt.s3_bucket, f"{opt.s3_prefix}/weights.pt")
     else:
         logger.info(f"File does not exist: {opt.weights_path}")
 
+    ## upload once since these don't change...
     if first_upload:
         if len(opt.categories_path)>0 and os.path.exists(opt.categories_path):
             logger.info(f"Uploading {opt.categories_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/categories.json")
@@ -112,6 +114,19 @@ def upload_model(opt):
     
     first_upload = False
     logger.info('All artifacts uploaded!')
+
+def upload_log(opt):
+    global s3_client
+
+    if s3_client is None:
+        s3_client = boto3.client("s3")
+    
+    ## upload output log...
+    if len(opt.log_path)>0 and os.path.exists(opt.log_path):
+        logger.info(f"Uploading {opt.log_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/output.log")
+        s3_client.upload_file(opt.log_path, opt.s3_bucket, f"{opt.s3_prefix}/output.log")
+    else:
+        logger.info(f"File does not exist: {opt.weights_path}")
 
 def train(hyp, opt, device, tb_writer=None):
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
@@ -575,8 +590,12 @@ def train(hyp, opt, device, tb_writer=None):
                     strip_optimizer(best)
                     upload_model(opt)
                     new_best_model = False
-                
+            
+            # print best model so far
             pfunc(best_model_msg)
+
+            # Upload output log to s3
+            upload_log(opt)
 
         ## END DDP VALIDATION
         ################################################################
@@ -672,6 +691,7 @@ if __name__ == '__main__':
     parser.add_argument('--hyp_path', type=str, default='', help='hyp_path')
     parser.add_argument('--categories_path', type=str, default='', help='categories_path')
     parser.add_argument('--manifest_path', type=str, default='', help='manifest_path')
+    parser.add_argument('--log-path', type=str, default='wandb/latest-run/files/output.log', help='log_path')
     opt = parser.parse_args()
 
     # Set DDP variables
