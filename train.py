@@ -115,7 +115,7 @@ def upload_model(opt):
     first_upload = False
     logger.info('All artifacts uploaded!')
 
-def upload_log(opt):
+def upload_log(opt, verbose=False):
     global s3_client
 
     if s3_client is None:
@@ -123,7 +123,8 @@ def upload_log(opt):
     
     ## upload output log...
     if len(opt.log_path)>0 and os.path.exists(opt.log_path):
-        logger.info(f"Uploading {opt.log_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/output.log")
+        if verbose:
+            logger.info(f"Uploading {opt.log_path} to s3://{opt.s3_bucket}/{opt.s3_prefix}/output.log")
         s3_client.upload_file(opt.log_path, opt.s3_bucket, f"{opt.s3_prefix}/output.log")
     else:
         logger.info(f"File does not exist: {opt.weights_path}")

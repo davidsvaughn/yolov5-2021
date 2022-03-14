@@ -152,7 +152,7 @@ class Detector:
 
         if opt is not None:
             weights, img_size, conf_thres, iou_thres, device, classes, categories_path, cct, sem_classes, sem_conf_thres, sem_iou_thres = \
-                opt.weights, opt.img_size, opt.conf_thres, opt.iou_thres, opt.device, opt.classes, opt.categories_path, opt.cct, opt.sem_classes, opt.sem_conf_thres, opt.sem_iou_thres
+                opt.weights, opt.img_size, opt.conf_thres, opt.iou_thres, opt.device, opt.classes, opt.categories, opt.cct, opt.sem_classes, opt.sem_conf_thres, opt.sem_iou_thres
         
         ## parse yolargs parameters....
         try:
@@ -238,7 +238,7 @@ class Detector:
                 print('save_dir is set to None!')
                 sys.exit()
             t1 = time_synchronized()
-            detections, img0 = self.get_detections(img_file, opt)
+            detections, img0 = self.get_detections(img_file)#, opt)
             t2 = time_synchronized()
 
             if k%10==0: print(k)
