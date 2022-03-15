@@ -530,75 +530,77 @@ def train(hyp, opt, device, tb_writer=None):
         ##################################################################################
         ## DDP VALIDATION....
         # results = (mp, mr, mf1, map50, map)#, *(loss.cpu() / len(dataloader)).tolist())
+        try:
+            results = test_ddp(opt, 
+                                de_parallel(model), 
+                                testloader, 
+                                rank, 
+                                device, 
+                                names,
+                                )   
 
-        results = test_ddp(opt, 
-                            de_parallel(model), 
-                            testloader, 
-                            rank, 
-                            device, 
-                            names,
-                            )   
+            if rank in [-1, 0]:
+                pfunc(f'Validation Time: {(time.time()-t1)/60:0.2f} min')
 
-        if rank in [-1, 0]:
-            pfunc(f'Validation Time: {(time.time()-t1)/60:0.2f} min')
+                # Logging
+                tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
+                        'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
+                        # 'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
+                        'x/lr0', 'x/lr1', 'x/lr2']  # params
+                for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
+                    if tb_writer:
+                        tb_writer.add_scalar(tag, x, epoch)  # tensorboard
+                    if wandb_logger.wandb:
+                        wandb_logger.log({tag: x})  # W&B
 
-            # Logging
-            tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',  # train loss
-                    'metrics/precision', 'metrics/recall', 'metrics/F1', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
-                    # 'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
-                    'x/lr0', 'x/lr1', 'x/lr2']  # params
-            for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
-                if tb_writer:
-                    tb_writer.add_scalar(tag, x, epoch)  # tensorboard
-                if wandb_logger.wandb:
-                    wandb_logger.log({tag: x})  # W&B
+                # Update best fitness
+                # fitness = weighted combination of [P, R, F1, mAP@0.25, mAP@0.25:0.95]
+                fi = fitness(np.array(results).reshape(1, -1))
+                if fi > best_fitness:
+                    best_fitness = fi
+                wandb_logger.end_epoch(best_result=best_fitness == fi)
 
-            # Update best fitness
-            # fitness = weighted combination of [P, R, F1, mAP@0.25, mAP@0.25:0.95]
-            fi = fitness(np.array(results).reshape(1, -1))
-            if fi > best_fitness:
-                best_fitness = fi
-            wandb_logger.end_epoch(best_result=best_fitness == fi)
+                # Save model
+                if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
+                    ckpt = {'epoch': epoch,
+                            'best_fitness': best_fitness,
+                            # 'training_results': results_file.read_text(),
+                            'model': deepcopy(de_parallel(model)).half(),
+                            'ema': deepcopy(ema.ema).half(),
+                            'updates': ema.updates,
+                            'optimizer': optimizer.state_dict(),
+                            'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
 
-            # Save model
-            if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
-                ckpt = {'epoch': epoch,
-                        'best_fitness': best_fitness,
-                        # 'training_results': results_file.read_text(),
-                        'model': deepcopy(de_parallel(model)).half(),
-                        'ema': deepcopy(ema.ema).half(),
-                        'updates': ema.updates,
-                        'optimizer': optimizer.state_dict(),
-                        'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
+                    # Save last, best and delete
+                    torch.save(ckpt, last)
+                    if best_fitness == fi:
+                        pfunc('Saving best model!')
+                        torch.save(ckpt, best)
+                        new_best_model = True
+                        best_model_msg = f'Best Model: Epoch {epoch+1}, mF1={results[2]:0.3f}, mAP@0.25:0.95={results[4]:0.3f}'
 
-                # Save last, best and delete
-                torch.save(ckpt, last)
-                if best_fitness == fi:
-                    pfunc('Saving best model!')
-                    torch.save(ckpt, best)
-                    new_best_model = True
-                    best_model_msg = f'Best Model: Epoch {epoch+1}, mF1={results[2]:0.3f}, mAP@0.25:0.95={results[4]:0.3f}'
+                    if wandb_logger.wandb:
+                        if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
+                            wandb_logger.log_model(
+                                last.parent, opt, epoch, fi, best_model=best_fitness == fi)
+                    del ckpt
 
-                if wandb_logger.wandb:
-                    if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
-                        wandb_logger.log_model(
-                            last.parent, opt, epoch, fi, best_model=best_fitness == fi)
-                del ckpt
-
-            # Upload best model to s3
-            if (epoch+1)%10==0 and epoch>15:
-                if new_best_model:
-                    strip_optimizer(best)
-                    upload_model(opt)
-                    new_best_model = False
+                # Upload best model to s3
+                if (epoch+1)%10==0 and epoch>15:
+                    if new_best_model:
+                        strip_optimizer(best)
+                        upload_model(opt)
+                        new_best_model = False
             
-            # print best model so far
-            pfunc(best_model_msg)
+                # print best model so far
+                pfunc(best_model_msg)
 
-            # Upload output log to s3
-            upload_log(opt)
+                # Upload output log to s3
+                upload_log(opt)
 
         ## END DDP VALIDATION
+        except Exception as e:
+            pfunc('Validation failed.')
         ################################################################
 
         # end epoch ----------------------------------------------------------------------------------------------------
