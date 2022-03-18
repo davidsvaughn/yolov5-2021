@@ -60,6 +60,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                         drop_last=True,
                         lazy_caching=False,
                         shuffle=True,
+                        training=True,
                         rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
 
     # Make sure only the first process in DDP process the dataset first, and the following others can use the *.cache file (labels)
@@ -76,7 +77,8 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                                         stride=int(stride),
                                         pad=pad,
                                         image_weights=image_weights,
-                                        prefix=prefix)
+                                        prefix=prefix,
+                                        training=training)
 
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
@@ -368,7 +370,7 @@ def img2label_paths(img_paths):
 class LoadImagesAndLabels(Dataset):  # for training/testing
     def __init__(self, path, img_size=640, batch_size=16, augment=False, hyp=None, rect=False, image_weights=False,
                  cache_images=False, lazy_caching=False, cache_efficient_sampling=False, rank=0,
-                 single_cls=False, stride=32, pad=0.0, prefix=''):
+                 single_cls=False, stride=32, pad=0.0, prefix='', training=True):
         self.img_size = img_size
         self.augment = augment
         self.hyp = hyp
@@ -449,8 +451,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.n = n
         self.indices = range(n)
         idx = np.array(self.indices)
-        ws = dist.get_world_size()
-        self.idx = idx[idx % ws == self.rank]
+        ws = dist.get_world_size() if training else 1
+        self.idx = idx[idx % ws == self.rank] if training else idx
 
         # Rectangular Training
         if self.rect:

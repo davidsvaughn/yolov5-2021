@@ -373,7 +373,8 @@ def train(hyp, opt, device, tb_writer=None):
         logger.info('Stepping lr_scheduler forward {} epochs...'.format(init_epochs))
     for i in range(init_epochs-1):
         scheduler.step()
-    # if init_epochs>0 and rank in [-1, 0]:  # check initial model performance....
+    ## check initial model performance....
+    # if init_epochs>0 and rank in [-1, 0]:
     #     test.test(opt.data,
     #             batch_size=test_batch_size,
     #             imgsz=imgsz_test,
@@ -510,11 +511,6 @@ def train(hyp, opt, device, tb_writer=None):
 
             # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
-
-        # if (epoch+1)%10==0:
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
-        #     if rank in [-1, 0]: pfunc('\tempty cuda cache took %.2f sec.\n' % ((time.time() - t1)))
 
         # Scheduler
         lr = [x['lr'] for x in optimizer.param_groups]  # for tensorboard
