@@ -692,6 +692,44 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
 
 # Ancillary functions --------------------------------------------------------------------------------------------------
+
+def dots(n, s, vx, vy):
+    # global p
+    h,w = vx.shape
+    nx,ny = (w*s), (h*s)
+    p = int( max( min(nx,ny)/n , 1) )
+    # p = min(p, int(1 + p**((p-1)/p)))
+    p = min(p, int(p**((p-1)/p)))
+    
+    nx,ny = int(nx), int(ny)
+    # dx,dy = vx%nx==0, vy%ny==0
+    dx,dy = (vx/p-0.5).astype('int')%n==0, (vy/p-0.5).astype('int')%n==0
+    return dx*dy*1
+
+def border(f,vx,vy):
+    h,w = vx.shape
+    if h<w:
+        fy = f
+        fx = 1-h*(1-f)/w
+    else:
+        fx = f
+        fy = 1-w*(1-f)/h
+    mx = 2*abs(vx-(w-1)/2)/w > fx
+    my = 2*abs(vy-(h-1)/2)/h > fy
+    return (mx+my)*1
+
+def borderdots(img, n=6, s=0.03, f=0.8):
+    h,w = img.shape[:2]
+    vy,vx = torch.meshgrid([torch.arange(h), torch.arange(w)])
+    vx,vy = vx.numpy(), vy.numpy()
+    d = dots(n, s, vx, vy)
+    m = border(f, vx, vy)
+    idx = (d*m == 1)
+    img[idx] = [0,255,255]
+    return img
+
+
+import ntpath
 def load_image(self, index):
     # loads 1 image from dataset, returns img, original hw, resized hw
     img = self.imgs[index]
@@ -699,8 +737,16 @@ def load_image(self, index):
         path = self.img_files[index]
         img = cv2.imread(path)  # BGR
         assert img is not None, 'Image Not Found ' + path
-        h0, w0 = img.shape[:2]  # orig hw
 
+        ## test augment ##
+        img = borderdots(img)
+        #####
+        # dir = '/home/david/code/phawk/data/generic/transmission/borderdots/test/'
+        # fn = ntpath.split(path)[-1]
+        # cv2.imwrite(dir + fn, img)
+        ##################
+
+        h0, w0 = img.shape[:2]  # orig hw
         sz = self.crop if self.crop>0 else self.img_size
         r = sz / max(h0, w0)  # resize image to img_size
 
