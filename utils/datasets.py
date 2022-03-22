@@ -739,7 +739,7 @@ def load_image(self, index):
         assert img is not None, 'Image Not Found ' + path
 
         ## test augment ##
-        img = borderdots(img)
+        # img = borderdots(img)
         #####
         # dir = '/home/david/code/phawk/data/generic/transmission/borderdots/test/'
         # fn = ntpath.split(path)[-1]
