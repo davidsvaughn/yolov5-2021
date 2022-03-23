@@ -34,6 +34,10 @@ def read_lines(fn):
         lines = [n.strip() for n in f.readlines()]
     return lines
 
+def empty_file(fn):
+    with open(fn, 'w') as f:
+        f.write('')
+
 def load_inference_image(image_path, scale, stride):
     img0 = cv2.imread(image_path)
     if img0 is None:
@@ -231,6 +235,7 @@ class Detector:
 
     def run_detections(self, opt):
         image_files = FileIterator(opt.source)
+        
         for k,img_file in enumerate(image_files):
             p = Path(img_file)  # to Path
 
@@ -282,6 +287,9 @@ class Detector:
             print(f'{s}Done. ({t2 - t1:.3f}s)')
             if opt.save_img and len(detections)>0:
                 cv2.imwrite(save_path, img0)
+
+            if len(detections)==0:
+                empty_file(txt_path + '.txt')
 
 class ThermalDetector(Detector):
     def __init__(self, 
