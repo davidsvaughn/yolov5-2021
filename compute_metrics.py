@@ -59,7 +59,7 @@ def bbox_iou(boxes1, boxes2):
 #############################################################
 
 iou_thres = 0.25
-max_by_class = False
+max_by_class = True
 
 ## Rich 70
 # class_file = '/home/product/dvaughn/data/fpl/component/rich/yolov5_testing/classes.txt'
@@ -69,10 +69,15 @@ max_by_class = False
 # pred_dir = '/home/product/dvaughn/data/fpl/component/models/latest/detect/run_3008/labels'
 # lab_dir = '/home/product/dvaughn/data/fpl/component/labels'
 
-## RGB
-class_file = '/home/david/code/phawk/data/solar/indivillage/classes.txt'
-pred_dir = '/home/david/code/phawk/data/solar/indivillage/models/model1/detect/exp/labels'
-lab_dir = '/home/david/code/phawk/data/solar/indivillage/labels'
+# ## RGB
+# class_file = '/home/david/code/phawk/data/solar/indivillage/classes.txt'
+# pred_dir = '/home/david/code/phawk/data/solar/indivillage/models/model1/detect/exp/labels'
+# lab_dir = '/home/david/code/phawk/data/solar/indivillage/labels'
+
+## Insulator Validation
+class_file = '/home/david/code/phawk/data/generic/transmission/damage/insulator_damage/classes.txt'
+pred_dir = '/home/david/code/phawk/data/generic/transmission/damage/insulator_damage/models/model6/detect/val/labels'
+lab_dir = '/home/david/code/phawk/data/generic/transmission/damage/insulator_damage/labels'
 
 pred_files = get_filenames(pred_dir, txt)
 # shuf(pred_files)
@@ -93,13 +98,24 @@ for fn in pred_files:
     nl = len(labels)
     tcls = labels[:, 0].tolist() if nl else [] 
     correct = np.zeros([pred.shape[0], niou], dtype=bool)
-    
+
+    if len(pred) == 0:
+        if nl:
+            stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
+        continue
+
+    conf = pred[:,5]
     if nl:
         detected = []  # target indices
         tcls_tensor = labels[:,0].astype(np.int32)
         ni[np.unique(tcls_tensor)] += 1
         tbox = xywh2xyxy(labels[:, 1:5])
         pbox = xywh2xyxy(pred[:, 1:5])
+
+        ## center distance to closest edge (for insulator damage)
+        # d = np.hstack([pred[:,1:3], 1-pred[:,1:3]]).min(1)
+        # y = 1/(1 + np.exp(-100*(d-0.05))) ## sigmoid
+        # conf *= y
         
         # if plots:
         #     confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1))
@@ -126,7 +142,7 @@ for fn in pred_files:
                         if len(detected) == nl:  # all targets already located in image
                             break
 
-    stats.append((correct, pred[:,5], pred[:,0], tcls))
+    stats.append((correct, conf, pred[:,0], tcls))
 stats = [np.concatenate(x, 0) for x in zip(*stats)]
 
 mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats,
