@@ -22,6 +22,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 import boto3
 import gc
+import ast
 
 from tqdm import tqdm
 # from tqdm.auto import tqdm
@@ -168,6 +169,18 @@ def train(hyp, opt, device, tb_writer=None):
     nc = 1 if opt.single_cls else int(data_dict['nc'])  # number of classes
     names = ['item'] if opt.single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
     assert len(names) == nc, '%g names found for nc=%g dataset in %s' % (len(names), nc, opt.data)  # check
+
+    ## yolargs
+    yolargs = None
+    try:
+        if opt.yolargs is not None and len(opt.yolargs)>0:
+            ## yolargs should evaluate to a python dict()
+            yolargs = ast.literal_eval(opt.yolargs)
+            ## add yolargs to hyp (overwrite)...
+            for k,v in yolargs.items():
+                hyp[k] = v
+    except:
+        pfunc(f'ERROR: problem parsing yolargs string: {yolargs}')
 
     # Model
     pretrained = weights.endswith('.pt')
@@ -683,6 +696,7 @@ if __name__ == '__main__':
     parser.add_argument('--bbox_interval', type=int, default=-1, help='Set bounding-box image logging interval for W&B')
     parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
+    parser.add_argument('--yolargs', type=str, default=None, help='extra yolo args (should evaluate to a python dict)')
     # Params needed to upload model checkpoints to s3 
     parser.add_argument('--s3_bucket', type=str, default='', help='s3_bucket')
     parser.add_argument('--s3_prefix', type=str, default='', help='s3_prefix')
