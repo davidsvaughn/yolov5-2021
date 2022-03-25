@@ -77,6 +77,11 @@ def gpu_stats():
         pfunc(f'GPU:{i} Total:{round(float(mem.total)/1000000000, 2)}, Used: {round(float(mem.used)/1000000000, 2)}')
         if i>0: break
 
+def write_lines(fn, lines):
+    with open(fn, 'w') as f:
+        for line in lines:
+            f.write(f'{line}\n')
+
 def upload_model(opt):
     global s3_client, first_upload
 
@@ -112,6 +117,13 @@ def upload_model(opt):
             s3_client.upload_file(opt.manifest_path, opt.s3_bucket, f"{opt.s3_prefix}/manifest.txt")
         else:
             logger.info(f"File does not exist: {opt.manifest_path}")
+
+        if opt.job_str:
+            fn = 'job.json'
+            with open(fn, 'w') as f:
+                f.write(f'{opt.job_str}\n')
+            logger.info(f"Uploading {fn} to s3://{opt.s3_bucket}/{opt.s3_prefix}/{fn}")
+            s3_client.upload_file(fn, opt.s3_bucket, f"{opt.s3_prefix}/{fn}")
     
     first_upload = False
     logger.info('All artifacts uploaded!')
@@ -181,6 +193,10 @@ def train(hyp, opt, device, tb_writer=None):
                 hyp[k] = v
     except:
         pfunc(f'ERROR: problem parsing hyps (hyperparameter string): {hyps}')
+
+    # Print swagger job json string...
+    if opt.job_str:
+        pfunc(f'swagger job submitted:\n{opt.job_str}\n')
 
     # Model
     pretrained = weights.endswith('.pt')
@@ -697,6 +713,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
     parser.add_argument('--hyps', type=str, default=None, help='command line hyperparameters - overwrites hyp.yaml! (should evaluate to a python dict)')
+    parser.add_argument('--job-str', type=str, default=None, help='swagger job json string')
     # Params needed to upload model checkpoints to s3 
     parser.add_argument('--s3_bucket', type=str, default='', help='s3_bucket')
     parser.add_argument('--s3_prefix', type=str, default='', help='s3_prefix')
