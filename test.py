@@ -168,6 +168,7 @@ def test(data,
         # pfunc(f'test_batch_size=={len(output)}')
         # Statistics per image
         idx = []
+        fn,fp = 0,0
         for si, pred in enumerate(output):
             labels = targets[targets[:, 0] == si, 1:]
             # Dims of all target boxes (in pixels)

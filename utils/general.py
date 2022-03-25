@@ -538,7 +538,7 @@ def wh_iou(wh1, wh2):
     return inter / (wh1.prod(2) + wh2.prod(2) - inter)  # iou = inter / (area1 + area2 - inter)
 
 
-def non_max_suppression(prediction, conf_thres=0.01, iou_thres=0.3, classes=None, agnostic=True, multi_label=False, cct=None,# conf_thres=0.1, iou_thres=0.25
+def non_max_suppression(prediction, conf_thres=0.01, iou_thres=0.3, classes=None, agnostic=True, multi_label=False, cct=None,
                         labels=(), max_det=2000):
     """Runs Non-Maximum Suppression (NMS) on inference results
 

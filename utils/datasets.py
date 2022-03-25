@@ -26,6 +26,8 @@ from utils.torch_utils import torch_distributed_zero_first
 from utils.sampler import CacheEfficientSampler
 import torch.distributed as dist
 
+TQDM = False
+
 # Parameters
 help_url = 'https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
 img_formats = ['bmp', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'dng', 'webp', 'mpo']  # acceptable image suffixes
@@ -428,8 +430,11 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         # Display cache
         nf, nm, ne, nc, n = cache.pop('results')  # found, missing, empty, corrupted, total
         if exists:
-            d = f"Scanning '{cache_path}' images and labels... {nf} found, {nm} missing, {ne} empty, {nc} corrupted"
-            tqdm(None, desc=prefix + d, total=n, initial=n)  # display cache results
+            d = prefix + f"Scanning '{cache_path}' images and labels... {nf} found, {nm} missing, {ne} empty, {nc} corrupted"
+            if TQDM:
+                tqdm(None, desc=d, total=n, initial=n)  # display cache results
+            else:
+                print(d)
         assert nf > 0 or not augment, f'{prefix}No labels in {cache_path}. Can not train without labels. See {help_url}'
 
         # Read cache
@@ -485,20 +490,22 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             gb = 0  # Gigabytes of cached images
             indexes = self.idx if self.cache_efficient_sampling and rank!=-1 else self.indices
             results = ThreadPool(8).imap(lambda x: load_image_and_index(*x), zip(repeat(self), indexes))  # 8 threads
-            pbar = tqdm(results, total=len(indexes))
+            pbar = tqdm(results, total=len(indexes)) if TQDM else results
             for xi in pbar:
                 x,i = xi
                 self.imgs[i], self.img_hw0[i], self.img_hw[i] = x  # img, hw_original, hw_resized = load_image(self, i)
                 gb += self.imgs[i].nbytes
-                pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
-            pbar.close()
+                if TQDM:
+                    pbar.desc = f'{prefix}Caching images ({gb / 1E9:.1f}GB)'
+            if TQDM:
+                pbar.close()
 
     def cache_labels(self, path=Path('./labels.cache'), prefix=''):
         # Cache dataset labels, check images and read shapes
         x = {}  # dict
         nm, nf, ne, nc = 0, 0, 0, 0  # number missing, found, empty, duplicate
         pbar = zip(self.img_files, self.label_files)
-        pbar = tqdm(pbar, desc='Scanning images', total=len(self.img_files))
+        pbar = tqdm(pbar, desc='Scanning images', total=len(self.img_files)) if TQDM else pbar
         for i, (im_file, lb_file) in enumerate(pbar):
             try:
                 # verify images
@@ -534,10 +541,12 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             except Exception as e:
                 nc += 1
                 logging.info(f'{prefix}WARNING: Ignoring corrupted image and/or label {im_file}: {e}')
-
-            pbar.desc = f"{prefix}Scanning '{path.parent / path.stem}' images and labels... " \
-                        f"{nf} found, {nm} missing, {ne} empty, {nc} corrupted"
-        pbar.close()
+            
+            if TQDM:
+                pbar.desc = f"{prefix}Scanning '{path.parent / path.stem}' images and labels... " \
+                            f"{nf} found, {nm} missing, {ne} empty, {nc} corrupted"
+        if TQDM:
+            pbar.close()
 
         if nf == 0:
             logging.info(f'{prefix}WARNING: No labels found in {path}. See {help_url}')
