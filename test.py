@@ -73,13 +73,8 @@ def test(data,
 
     # Initialize/load model and set device
     training = model is not None
-    if training:  # called by train.py
+    if training:  # i.e. called by train.py
         device = next(model.parameters()).device  # get model device
-
-        # # Multi-GPU....
-        # if not half_precision and device.type != 'cpu' and torch.cuda.device_count() > 1:
-        #     pfunc('Running test.py in DP mode...')
-        #     model = torch.nn.DataParallel(model)
 
     else:  # called directly
         set_logging()
@@ -94,11 +89,6 @@ def test(data,
         model = attempt_load(weights, map_location=device)  # load FP32 model
         gs = max(int(model.stride.max()), 32)  # grid size (max stride)
         imgsz = check_img_size(imgsz, s=gs)  # check img_size
-
-        # # Multi-GPU disabled, incompatible with .half() https://github.com/ultralytics/yolov5/issues/99
-        # if not half_precision and device.type != 'cpu' and torch.cuda.device_count() > 1:
-        #     pfunc('TEST IN DATA_PARALLEL MODE!!!')
-        #     model = torch.nn.DataParallel(model)
 
     # Half
     half = device.type != 'cpu' and half_precision  # half precision only supported on CUDA
