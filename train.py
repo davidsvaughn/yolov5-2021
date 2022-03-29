@@ -52,18 +52,10 @@ nvidia_smi.nvmlInit()
 
 # logging.StreamHandler.terminator = ""
 logger = logging.getLogger(__name__)
+pfunc = logger.info
 
 s3_client    = None
 first_upload = True
-
-pfunc = logger.info
-# pfunc = print
-
-TQDM = False
-
-DDP_VAL = True
-OLD_VAL = 500
-DEBUG = False
 
 def gpu_stats():
     n = nvmlDeviceGetCount()
@@ -344,7 +336,7 @@ def train(hyp, opt, device, tb_writer=None):
     testloader = create_dataloader(test_path, imgsz_test, test_batch_size, gs, opt,
                                     hyp=hyp, cache=opt.cache_images and not opt.notest,
                                     cache_efficient_sampling=True, drop_last=False, shuffle=False,
-                                    rect=True, rank=rank,
+                                    rect=True, training=False, rank=rank,
                                     world_size=opt.world_size, workers=opt.workers,
                                     pad=0.5, prefix=colorstr('val: '))[0]
     # Process 0
@@ -453,8 +445,6 @@ def train(hyp, opt, device, tb_writer=None):
             steps = list(range(100,0,-2))
             pfunc('==========================================================================================================')
             pfunc(f'Epoch {epoch+1}/{epochs}')
-            if TQDM:
-                pbar = tqdm(pbar, total=nb)#, position=0, leave=True)  # progress bar
 
         optimizer.zero_grad()
         
@@ -464,15 +454,14 @@ def train(hyp, opt, device, tb_writer=None):
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
 
             ## simple progress indicator....
-            if not TQDM:
-                if rank in [-1, 0]:
-                    prog = int(np.ceil(100*(i+1)/nb))
-                    while len(steps)>0 and prog>=steps[-1]:
-                        step = steps.pop()
-                        # pfunc('.')
-                        if step%10==0:
-                            pfunc(f'      {step}%')
-                            # gpu_stats()
+            if rank in [-1, 0]:
+                prog = int(np.ceil(100*(i+1)/nb))
+                while len(steps)>0 and prog>=steps[-1]:
+                    step = steps.pop()
+                    # pfunc('.')
+                    if step%10==0:
+                        pfunc(f'      {step}%')
+                        # gpu_stats()
 
             # Warmup
             if ni <= nw:
@@ -520,12 +509,6 @@ def train(hyp, opt, device, tb_writer=None):
                 imgs_sec = (num_img/td) * opt.world_size
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                if TQDM:
-                    s = ('%10s' * 2 + '%10.4g' * 6) % (
-                        '%g/%g' % (epoch+1, epochs), mem, *mloss, targets.shape[0],
-                        imgs_sec ## #images/sec
-                    )
-                    pbar.set_description(s)
 
                 # Plot
                 if plots and ni < 5:
