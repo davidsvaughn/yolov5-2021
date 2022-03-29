@@ -56,11 +56,25 @@ def box_iou(box, boxes):
 def bbox_iou(boxes1, boxes2): 
     return np.array([box_iou(box1.T, boxes2.T) for box1 in boxes1])
 
-#############################################################
+## distance to closest edge... X: [n,:4] coords in YOLO FORMAT !!!
+def e_dist(X):
+    return np.hstack([X[:,:2], 1-X[:,:2]]).min(1)
+
+## max(e_dist) over 4 box corners... X: [n,:4] coords in YOLO FORMAT !!!
+def max_corner_dist(X):
+    xyxy = xywh2xyxy(X[:,:4])
+    return np.vstack([e_dist(xyxy[:,[i,j]]) for i,j in zip([0,0,2,2],[1,3,1,3])]).max(0)
+#########################################################################################
+
+plot = True
+save_dir = None
+edge_filter = False
+
 
 iou_thres = 0.25
 max_by_class = True
 
+#########################################################################################
 ## Rich 70
 # class_file = '/home/product/dvaughn/data/fpl/component/rich/yolov5_testing/classes.txt'
 # pred_dir = '/home/product/dvaughn/data/fpl/component/rich/yolov5_testing/rich_metrics/pred'
@@ -69,15 +83,19 @@ max_by_class = True
 # pred_dir = '/home/product/dvaughn/data/fpl/component/models/latest/detect/run_3008/labels'
 # lab_dir = '/home/product/dvaughn/data/fpl/component/labels'
 
-# ## RGB
+# ## solar RGB
 # class_file = '/home/david/code/phawk/data/solar/indivillage/classes.txt'
 # pred_dir = '/home/david/code/phawk/data/solar/indivillage/models/model1/detect/exp/labels'
 # lab_dir = '/home/david/code/phawk/data/solar/indivillage/labels'
 
 ## Insulator Validation
+# edge_filter = True
 class_file = '/home/david/code/phawk/data/generic/transmission/damage/insulator_damage/classes.txt'
-pred_dir = '/home/david/code/phawk/data/generic/transmission/damage/insulator_damage/models/model6/detect/val/labels'
 lab_dir = '/home/david/code/phawk/data/generic/transmission/damage/insulator_damage/labels'
+pred_dir = '/home/david/code/phawk/data/generic/transmission/damage/insulator_damage/models/model7/detect/val/labels'
+save_dir = pred_dir.replace('/labels','')
+
+# pred_dir = '/home/david/code/phawk/data/generic/transmission/damage/insulator_damage/models/model1/detect/val_02_001/labels'
 
 pred_files = get_filenames(pred_dir, txt)
 # shuf(pred_files)
@@ -99,25 +117,30 @@ for fn in pred_files:
     tcls = labels[:, 0].tolist() if nl else [] 
     correct = np.zeros([pred.shape[0], niou], dtype=bool)
 
+    ## if no predictions exist....
     if len(pred) == 0:
         if nl:
             stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
         continue
 
+    ## get confidence value(s)
     conf = pred[:,5]
+
+    ## center distance to closest edge (for insulator damage) ##
+    if edge_filter:
+        d = e_dist(pred[:,1:])
+        y = 1/(1 + np.exp(-50*(d-0.02))) ## sigmoid y = 1/(1 + np.exp(-35*(d-0.12)))
+        conf *= y
+
+    ## if true labels exist....
     if nl:
         detected = []  # target indices
         tcls_tensor = labels[:,0].astype(np.int32)
         ni[np.unique(tcls_tensor)] += 1
         tbox = xywh2xyxy(labels[:, 1:5])
         pbox = xywh2xyxy(pred[:, 1:5])
-
-        ## center distance to closest edge (for insulator damage)
-        # d = np.hstack([pred[:,1:3], 1-pred[:,1:3]]).min(1)
-        # y = 1/(1 + np.exp(-100*(d-0.05))) ## sigmoid
-        # conf *= y
         
-        # if plots:
+        # if plot:
         #     confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1))
 
         # Per target class
@@ -143,14 +166,15 @@ for fn in pred_files:
                             break
 
     stats.append((correct, conf, pred[:,0], tcls))
+
 stats = [np.concatenate(x, 0) for x in zip(*stats)]
 
-mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(*stats,
+mp, mr, map50, map, mf1, ap_class, conf_best, nt, (p, r, ap50, ap, f1, cc) = ap_per_class(  *stats,
                                                                                             names=names,
-                                                                                            max_by_class=max_by_class, 
-                                                                                            # conf_thres=conf_thres,
-                                                                                            # plot=plots, 
-                                                                                            # save_dir=save_dir, 
+                                                                                            max_by_class=max_by_class,
+                                                                                            plot=plot,
+                                                                                            save_dir=save_dir,
+                                                                                            # conf_thres=conf_thres, 
                                                                                             # ct=ct, 
                                                                                             )
 
