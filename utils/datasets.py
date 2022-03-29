@@ -43,6 +43,75 @@ def get_hash(files):
     # Returns a single hash value of a list of files
     return sum(os.path.getsize(f) for f in files if os.path.isfile(f))
 
+def make_dirs(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+def aslist(x):
+    try:
+        _ = (e for e in x)
+    except TypeError:
+        return [x]
+    return x
+
+def is_grayscale(img):
+    return np.mean(img[...,0] - img[...,1]) < 0.001
+
+def init_clahe(cliplimit=3.0, dim=8):
+    return cv2.createCLAHE(clipLimit=cliplimit, tileGridSize=(dim,dim))
+
+def rgb2gray(rgb):
+    return np.dot(rgb[...,:3], [0.2989, 0.5870, 0.1140]).round().astype(np.uint8)
+    
+def blur(x, k=3, mode=1):
+    k = 2*(k//2)+1
+    x = x.astype(np.uint8)[:, :, ::-1]
+    if mode==1:
+        x = cv2.blur(x, (k,k))
+    else:
+        x = cv2.GaussianBlur(x, (k,k), 1)
+    return x
+
+def convert_rgb2gray(img, mu=100, sig=50, pinv=0.5):
+    g = rgb2gray(img)
+    g = (g-g.mean())/g.std()
+    
+    m = np.random.normal(mu,mu/10)
+    s = np.random.normal(sig,sig/10)
+
+    if random.random()<pinv: s=-s
+
+    g = g*s + mu
+    g = np.clip(g.round(),0,255).astype(np.uint8)
+
+    ## blur
+    g = repeat_channel(g)
+    m = random.randint(1,2)
+    if m==1: ## kernel size
+        k = random.randint(2,4)
+    else: ## gaussian blur kernel size
+        k = random.randint(7,17)
+    g = blur(g, k, m)
+    ##
+    return g.astype(np.float64)
+
+def process_thermal(self, img, debug=False, save_path='./data/rgb2gray'):
+    if debug:
+        make_dirs(save_path)
+        uid = np.random.randint(1000000)
+        cv2.imwrite(f'{save_path}/img_{uid}A.jpg', img)
+    if self.rgb2gray is not None and not is_grayscale(img):
+        ## convert to grayscale (pseudo-thermal)
+        img = convert_rgb2gray(img, *self.rgb2gray)
+        if debug:
+            cv2.imwrite(f'{save_path}/img_{uid}B.jpg', img)
+    if self.clahe is not None and is_grayscale(img):
+        ## adaptive histogram equalization...
+        img = self.clahe.apply(img[:,:,0].astype(np.uint8))[:,:,None] * np.ones(3, dtype=int)[None, None, :]
+        if debug:
+            cv2.imwrite(f'{save_path}/img_{uid}C.jpg', img)
+    return img.astype(np.uint8)
+
 def exif_size(img):
     # Returns exif-corrected PIL size
     s = img.size  # (width, height)
@@ -57,7 +126,8 @@ def exif_size(img):
 
     return s
 
-def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=False, cache=False, pad=0.0, rect=False,
+def create_dataloader(path, imgsz, batch_size, stride, opt, 
+                        hyp=None, augment=False, cache=False, pad=0.0, rect=False,
                         cache_efficient_sampling=False,
                         drop_last=True,
                         lazy_caching=False,
@@ -65,7 +135,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                         training=True,
                         rank=-1, world_size=1, workers=8, image_weights=False, quad=False, prefix=''):
 
-    # Make sure only the first process in DDP process the dataset first, and the following others can use the *.cache file (labels)
+    # Make sure only the first process in DDP process the dataset first, and the following others can use the *.cache file (i.e. label cache)
     with torch_distributed_zero_first(rank):
         dataset = LoadImagesAndLabels(path, imgsz, batch_size,
                                         augment=augment,  # augment images
@@ -378,7 +448,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.hyp = hyp
         self.image_weights = image_weights
         self.rect = False if image_weights else rect
-        self.mosaic = self.augment and not self.rect  # load 4 images at a time into a mosaic (only during training)
+        self.mosaic = self.augment and not self.rect and not training # load 4 images at a time into a mosaic (only during training)
+        self.training = training
         self.mosaic_border = [-img_size // 2, -img_size // 2]
         self.stride = stride
         self.path = path
@@ -389,13 +460,15 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.augment = augment
         self.perturb = augment
         self.crop = 0
+        self.rgb2gray = None
+        self.clahe = None
         if hyp is not None:
-            if hyp.get('augment_gray') and hyp['augment_gray']!=0:
-                self.augment = True
-                self.clahe = cv2.createCLAHE(clipLimit = 3.0, tileGridSize=(8,8))
-            if hyp.get('crop') and hyp['crop']>0:
+            if hyp.get('crop'):
                 self.crop = hyp['crop']
-
+            if hyp.get('rgb2gray'):
+                self.rgb2gray = aslist(hyp['rgb2gray'])
+            if hyp.get('clahe'):
+                self.clahe = init_clahe(*aslist(hyp['clahe']))
         try:
             f = []  # image files
             for p in path if isinstance(path, list) else [path]:
@@ -456,8 +529,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.n = n
         self.indices = range(n)
         idx = np.array(self.indices)
-        ws = dist.get_world_size() if training else 1
-        self.idx = idx[idx % ws == self.rank] if training else idx
+        ws = dist.get_world_size() # if training else 1
+        self.idx = idx[idx % ws == self.rank] # if training else idx
 
         # Rectangular Training
         if self.rect:
@@ -564,12 +637,6 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
     def __len__(self):
         return len(self.img_files)
 
-    # def __iter__(self):
-    #     self.count = -1
-    #     print('ran dataset iter')
-    #     #self.shuffled_vector = np.random.permutation(self.nF) if self.augment else np.arange(self.nF)
-    #     return self
-
     def __getitem__(self, index):
         index = self.indices[index]  # linear, shuffled, or image_weights
 
@@ -592,8 +659,12 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             img, (h0, w0), (h, w) = load_image(self, index)
             labels = self.labels[index].copy()
 
-            if self.crop>0:
+            # random cropping...
+            if self.crop>0 and self.training:
                 img, labels, (h,w) = random_crop_image_labels(img, labels, self.img_size, buf=50)
+            
+            # convert to grayscale and/or hist-equalize grayscale...
+            img = process_thermal(self, img)
 
             # Letterbox
             shape = self.batch_shapes[self.batch[index]] if self.rect else self.img_size  # final letterboxed shape
@@ -618,18 +689,6 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             # Augment colorspace
             if self.perturb:
                 augment_hsv(img, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
-            
-            ## Augment grayscale (pseudo-thermal)
-            if hyp is not None:
-                if hyp.get('augment_gray'):
-                    if max(h0, w0)>1000:## must be RGB
-                        # n = np.random.randint(10000)
-                        # cv2.imwrite(f'/home/david/code/phawk/data/test/test3/tmp/img_{n}A.jpg', img)
-                        img = augment_gray(img, hyp['augment_gray'])
-                        # cv2.imwrite(f'/home/david/code/phawk/data/test/test3/tmp/img_{n}B.jpg', img)
-                        ## adaptive histogram equalization...
-                        img = self.clahe.apply(img[:,:,0].astype(np.uint8))[:,:,None] * np.ones(3, dtype=int)[None, None, :]
-                        # cv2.imwrite(f'/home/david/code/phawk/data/test/test3/tmp/img_{n}C.jpg', img)
 
             # Apply cutouts
             # if random.random() < 0.9:
@@ -786,9 +845,6 @@ def augment_hsv(img, hgain=0.5, sgain=0.5, vgain=0.5):
     img_hsv = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val))).astype(dtype)
     cv2.cvtColor(img_hsv, cv2.COLOR_HSV2BGR, dst=img)  # no return needed
 
-def rgb2gray(rgb):
-    return np.dot(rgb[...,:3], [0.2989, 0.5870, 0.1140]).round().astype(np.uint8)
-
 def repeat_channel(x, n=3):
     return x[:,:,None].repeat(n, 2)
 
@@ -803,48 +859,15 @@ def save_np(x, f, gray=True):
 def up(x):
     return (x*255).round().astype(np.uint8)
 
-def blur(x, k=3, mode=1):
-    k = 2*(k//2)+1
-    x = x.astype(np.uint8)[:, :, ::-1]
-    if mode==1:
-        x = cv2.blur(x, (k,k))
-    else:
-        x = cv2.GaussianBlur(x, (k,k), 1)
-    return x
-
-def augment_gray(img, p):
-    if p==0:
-        return img
-    r1 = random.randint(1,2)
-    if p>0:
-        r2 = 1.0 - p*random.random()
-    else:
-        p=-p
-        r2 = 1.0-(1.0-p)/2 - p*random.random()
-    g = rgb2gray(img)*r2
-    g = g + random.randint(0, int(255-g.max()))
-    if r1==2: ## invert black/white
-        g = 255-g
-    g = repeat_channel(g)
-    ## blur
-    m = random.randint(1,2)
-    if m==1: ## kernel size
-        k = random.randint(2,4)
-    else: ## gaussian blur kernel size
-        k = random.randint(7,17)
-    g = blur(g, k, m)
-    ##
-    return g.astype(np.float64)
-
-def hist_equalize(img, clahe=True, bgr=False):
-    # Equalize histogram on BGR image 'img' with img.shape(n,m,3) and range 0-255
-    yuv = cv2.cvtColor(img, cv2.COLOR_BGR2YUV if bgr else cv2.COLOR_RGB2YUV)
-    if clahe:
-        c = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        yuv[:, :, 0] = c.apply(yuv[:, :, 0])
-    else:
-        yuv[:, :, 0] = cv2.equalizeHist(yuv[:, :, 0])  # equalize Y channel histogram
-    return cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR if bgr else cv2.COLOR_YUV2RGB)  # convert YUV image to RGB
+# def hist_equalize(img, clahe=True, bgr=False):
+#     # Equalize histogram on BGR image 'img' with img.shape(n,m,3) and range 0-255
+#     yuv = cv2.cvtColor(img, cv2.COLOR_BGR2YUV if bgr else cv2.COLOR_RGB2YUV)
+#     if clahe:
+#         c = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+#         yuv[:, :, 0] = c.apply(yuv[:, :, 0])
+#     else:
+#         yuv[:, :, 0] = cv2.equalizeHist(yuv[:, :, 0])  # equalize Y channel histogram
+#     return cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR if bgr else cv2.COLOR_YUV2RGB)  # convert YUV image to RGB
 
 
 def load_mosaic(self, index):
@@ -862,8 +885,12 @@ def load_mosaic(self, index):
         img, (h0,w0), (h,w) = load_image(self, index)
         labels, segments = self.labels[index].copy(), self.segments[index].copy()
 
+        # random cropping...
         if self.crop>0:
             img, labels, (h,w) = random_crop_image_labels(img, labels, self.img_size, buf=50)
+        
+        # convert to grayscale and/or hist-equalize grayscale...
+        img = process_thermal(self, img)
 
         # place img in img4
         if i == 0:  # top left
