@@ -29,6 +29,22 @@ class adict(dict):
         dict.__init__(self, *av, **kav)
         self.__dict__ = self
 
+def aslist(x):
+    try:
+        _ = (e for e in x)
+    except TypeError:
+        return [x]
+    return x
+
+def is_grayscale(img):
+    return np.mean(img[...,0] - img[...,1]) < 0.001
+
+def init_clahe(cliplimit=3.0, dim=8):
+    return cv2.createCLAHE(clipLimit=cliplimit, tileGridSize=(dim,dim))
+
+def apply_clahe(clahe, img):#if self.clahe is not None and is_grayscale(img):
+    return clahe.apply(img[:,:,0].astype(np.uint8))[:,:,None] * np.ones(3, dtype=int)[None, None, :]
+
 def read_lines(fn):
     with open(fn, 'r') as f:
         lines = [n.strip() for n in f.readlines()]
@@ -39,7 +55,7 @@ def empty_file(fn):
         f.write('')
 
 def load_inference_image(image_path, scale, stride):
-    img0 = cv2.imread(image_path)
+    img0 = cv2.imread(image_path) if isinstance(image_path, str) else image_path
     if img0 is None:
         return None, None, None
     # Pad & resize
@@ -102,7 +118,8 @@ class YoloModel:
         self.device = device
         self.half = self.device.type != 'cpu'  # half precision only supported on CUDA
         if cct is not None: ## class confidence thresholds
-            cct = ast.literal_eval(cct)
+            if isinstance(cct, str):
+                cct = ast.literal_eval(cct)
             cct = None if len(cct)==0 else torch.from_numpy(np.array(cct)).to(device)
         self.cct = cct
         # self.opt = opt
@@ -151,41 +168,49 @@ class Detector:
                 sem_classes=None, 
                 sem_conf_thres=0.1, 
                 sem_iou_thres=0.1,
+                clahe=None,
                 yolargs=None,
+                hyp=None,
                 opt=None):
 
         if opt is not None:
-            weights, img_size, conf_thres, iou_thres, device, classes, categories_path, cct, sem_classes, sem_conf_thres, sem_iou_thres = \
-                opt.weights, opt.img_size, opt.conf_thres, opt.iou_thres, opt.device, opt.classes, opt.categories, opt.cct, opt.sem_classes, opt.sem_conf_thres, opt.sem_iou_thres
+            weights, img_size, conf_thres, iou_thres, device, classes, categories_path, cct, sem_classes, sem_conf_thres, sem_iou_thres, hyp = \
+                opt.weights, opt.img_size, opt.conf_thres, opt.iou_thres, opt.device, opt.classes, opt.categories, opt.cct, opt.sem_classes, opt.sem_conf_thres, opt.sem_iou_thres, opt.hyp
         
         ## parse yolargs parameters....
         try:
             if yolargs is not None and len(yolargs)>0:
-                ## yolargs should evaluate to a python dict()
-                yolargs = ast.literal_eval(yolargs)
-                if 'scale' in yolargs:
-                    img_size = yolargs['scale']
-                if 'threshold' in yolargs:
-                    conf_thres = yolargs['threshold']
-                if 'conf_thres' in yolargs:
-                    conf_thres = yolargs['conf_thres']
-                if 'iou_thres' in yolargs:
-                    iou_thres = yolargs['iou_thres']
-                if 'sem_conf_thres' in yolargs:
-                    sem_conf_thres = yolargs['sem_conf_thres']
-                if 'sem_iou_thres' in yolargs:
-                    sem_iou_thres = yolargs['sem_iou_thres']
-                if 'sem_classes' in yolargs:
-                    sem_classes = yolargs['sem_classes']
-                if 'cct' in yolargs:
-                    cct = yolargs['cct']
+                hyp = yolargs
+
+            if hyp is not None and len(hyp)>0:
+                ## hyp should evaluate to a python dict()
+                hyp = ast.literal_eval(hyp)
+                if 'scale' in hyp:
+                    img_size = hyp['scale']
+                if 'threshold' in hyp:
+                    conf_thres = hyp['threshold']
+                if 'conf_thres' in hyp:
+                    conf_thres = hyp['conf_thres']
+                if 'iou_thres' in hyp:
+                    iou_thres = hyp['iou_thres']
+                if 'sem_conf_thres' in hyp:
+                    sem_conf_thres = hyp['sem_conf_thres']
+                if 'sem_iou_thres' in hyp:
+                    sem_iou_thres = hyp['sem_iou_thres']
+                if 'sem_classes' in hyp:
+                    sem_classes = hyp['sem_classes']
+                if 'cct' in hyp:
+                    cct = hyp['cct']
+                if 'clahe' in hyp:
+                    clahe = hyp['clahe']
         except:
-            print(f'ERROR: problem parsing yolargs string: {yolargs}')
+            print(f'ERROR: problem parsing yolargs string: {hyp}')
 
         self.classes = classes
         self.device = select_device(device)
         self.half = self.device.type != 'cpu'
         self.model, self.stride, self.scale = self.init_model(weights, img_size, conf_thres, iou_thres, cct, sem_classes, sem_conf_thres, sem_iou_thres, opt)
+        self.clahe = init_clahe(*aslist(clahe)) if clahe else None
 
         # Load the categories/class-names
         # categories_path = categories
@@ -207,6 +232,18 @@ class Detector:
         img, img0, ratio_pad = load_inference_image(img_file, scale=self.scale, stride=self.stride)
         if img0 is None:
             return None, None
+
+        #### CLAHE #############################################
+        if self.clahe is not None and is_grayscale(img0):
+            ## apply to model input image
+            img = img.transpose(1,2,0)
+            img = apply_clahe(self.clahe, img)
+            img = img.transpose(2,0,1)
+
+            ## apply clahe to output image also???
+            img0 = apply_clahe(self.clahe, img0).astype(np.uint8)
+        #########################################################
+
         ## run model
         pred = self.model.run(numpy2cuda(img, self.device, self.half), self.classes)
         ## process detections
@@ -221,7 +258,7 @@ class Detector:
                 xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                 detections.append((xywh, xyxy, conf, cls))
         return detections, img0
-    
+
     def get_detections(self, img_file):
         return self.detect(img_file)
 
@@ -250,7 +287,7 @@ class Detector:
             if opt.skip_empty and len(detections)==0:
                 continue
 
-            # Print results (?)
+            # Print results to screen(?)
             s = '%gx%g ' % img0.shape[:2]  # print string
             cls_idx = np.array([det[-1].cpu().numpy() for det in detections])
             for c in np.unique(cls_idx):
@@ -290,6 +327,27 @@ class Detector:
 
             if len(detections)==0:
                 empty_file(txt_path + '.txt')
+                
+    def detect_and_annotate(self, img_in):
+        detections, img_out = self.get_detections(img_in)
+        # Loop over detections
+        first = self.names.copy() if self.names else None
+        for xywh, xyxy, conf, cls in detections:
+            if isinstance(conf, tuple):
+                conf = conf[0]
+            img_lab = f'{conf:.2f}'
+            # Add bbox to image
+            c = int(cls)  # integer class
+            label = True
+            if first and first[c]:
+                first[c]=0
+            else:
+                label = False
+            name = f'{self.names[c]} ' if label else ''
+            label = f'{name}{img_lab}'
+            plot_one_box(xyxy, img_out, label=label, color=colors(c, True), line_thickness=6)
+        return img_out
+
 
 class ThermalDetector(Detector):
     def __init__(self, 
@@ -443,16 +501,8 @@ def detect(opt):
 
     if opt.hotspot:
         detector = ThermalDetector(opt=opt)
-        ## below is how model is created in ai_docker/inference...
-        # detector = ThermalDetector(opt.weights, img_size=opt.img_size, conf_thres=opt.conf_thres, iou_thres=opt.iou_thres, 
-        #                             hweights=opt.hotspot, hconf_thres=opt.hconf_thres, hiou_thres=opt.hiou_thres,
-        #                             device=opt.device, classes=opt.classes, categories_path=opt.categories, cct=opt.cct)
     else:
         detector = Detector(opt=opt)
-        ## below is how model is created in ai_docker/inference...
-        # detector = Detector(opt.weights, img_size=opt.img_size, conf_thres=opt.conf_thres, iou_thres=opt.iou_thres, 
-        #                     device=opt.device, classes=opt.classes, categories_path=opt.categories, cct=opt.cct,
-        #                     opt.sem_classes, opt.sem_conf_thres, opt.sem_iou_thres)
 
     t0 = time.time()
     detector.run_detections(opt)
@@ -494,12 +544,15 @@ if __name__ == '__main__':
     parser.add_argument('--sem-classes', type=str, default=None, help='list semantic classes: --sem-class [0], or --sem-class [0, 2, 3]')
     parser.add_argument('--sem-iou-thres', type=float, default=0.1, help='sematic class IOU threshold for NMS')
     parser.add_argument('--sem-conf-thres', type=float, default=0.1, help='semantic class confidence threshold')
+    parser.add_argument('--hyp', type=str, default=None, help='dict of hyperparameters')
 
     opt = parser.parse_args()
     if opt.classes is not None:
         opt.classes = eval(opt.classes)
     if opt.sem_classes is not None:
         opt.sem_classes = eval(opt.sem_classes)
+    if opt.hyp is not None:
+        opt.hyp = opt.hyp.replace(';',':').replace('\\','')
     print(opt)
     # check_requirements(exclude=('tensorboard', 'pycocotools', 'thop'))
 

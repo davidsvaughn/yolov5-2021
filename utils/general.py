@@ -539,7 +539,7 @@ def wh_iou(wh1, wh2):
 
 
 def non_max_suppression(prediction, conf_thres=0.01, iou_thres=0.3, classes=None, agnostic=True, multi_label=False, cct=None,
-                        labels=(), max_det=2000):
+                        labels=(), max_det=5000):
     """Runs Non-Maximum Suppression (NMS) on inference results
 
     Returns:
@@ -584,7 +584,7 @@ def non_max_suppression(prediction, conf_thres=0.01, iou_thres=0.3, classes=None
         if not x.shape[0]:
             continue
 
-        # Compute conf
+        # COMPUTE CONF = OBJECT_CONF * CLASS_CONF !!!!!
         x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
 
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
