@@ -618,7 +618,7 @@ class LoadImagesAndLabels(Dataset):
                 pbar.update(m)
             pbar.n = m*len(self.idx)
             pbar.refresh()
-            pbar.close()
+            # pbar.close()
 
     def check_cache_ram(self, safety_margin=0.1, prefix=''):
         # Check image caching requirements vs available memory
