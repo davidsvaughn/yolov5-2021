@@ -606,7 +606,7 @@ class LoadImagesAndLabels(Dataset):
             self.idx = self.idx[self.idx % WORLD_SIZE == RANK] if rank>-1 else self.idx # see: SmartDistributedSampler (above)
             fcn = self.cache_images_to_disk if cache_images == 'disk' else self.load_image
             results = ThreadPool(NUM_THREADS).imap(lambda i: (i, fcn(i)) , self.idx)
-            pbar = tqdm(results, total=len(self.idx), bar_format=TQDM_BAR_FORMAT)#, disable=LOCAL_RANK > 0)
+            pbar = tqdm(results, total=len(self.idx), bar_format=TQDM_BAR_FORMAT, disable=LOCAL_RANK > 0)
             for i, x in pbar:
                 if cache_images == 'disk':
                     b += self.npy_files[i].stat().st_size
