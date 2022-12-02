@@ -103,6 +103,7 @@ def seed_worker(worker_id):
 
 
 # Inherit from DistributedSampler and override iterator
+# https://github.com/pytorch/pytorch/blob/master/torch/utils/data/distributed.py
 class SmartDistributedSampler(distributed.DistributedSampler):
     def __iter__(self):
         # deterministically shuffle based on epoch and seed
@@ -112,9 +113,8 @@ class SmartDistributedSampler(distributed.DistributedSampler):
         if not self.shuffle:
             idx = idx.sort()[0]
         
-        ## force each rank (GPU process) to sample the same subset of data every time
-        ## --> for space efficient caching when using DDP
-        idx = idx[idx%self.num_replicas==self.rank]
+        ## force each rank (i.e. GPU process) to sample the same subset of data every epoch
+        idx = idx[idx % self.num_replicas == self.rank] # num_replicas == WORLD_SIZE
 
         idx = idx.tolist()
         if self.drop_last:
@@ -156,7 +156,7 @@ def create_dataloader(path,
             augment=augment,  # augmentation
             hyp=hyp,  # hyperparameters
             rect=rect,  # rectangular batches
-            rank=rank, # train? or val?
+            rank=rank,
             cache_images=cache,
             single_cls=single_cls,
             stride=int(stride),
@@ -167,7 +167,6 @@ def create_dataloader(path,
     batch_size = min(batch_size, len(dataset))
     nd = torch.cuda.device_count()  # number of CUDA devices
     nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])  # number of workers
-    # sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
     sampler = None if rank == -1 else SmartDistributedSampler(dataset, shuffle=shuffle)
     loader = DataLoader if image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
     generator = torch.Generator()
@@ -557,7 +556,6 @@ class LoadImagesAndLabels(Dataset):
         self.batch = bi  # batch index of image
         self.n = n
         self.indices = range(n)
-        self.idx = np.array(self.indices)
 
         # Update labels
         include_class = []  # filter labels to include only these classes (optional)
@@ -601,14 +599,14 @@ class LoadImagesAndLabels(Dataset):
             cache_images = False
         self.ims = [None] * n
         self.npy_files = [Path(f).with_suffix('.npy') for f in self.im_files]
+        self.idx = np.array(self.indices) # DDP indices
         if cache_images:
             b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
             self.im_hw0, self.im_hw = [None] * n, [None] * n
-            if rank>-1:
-                self.idx = self.idx[self.idx % WORLD_SIZE == RANK] # same subset of indices per GPU
+            self.idx = self.idx[self.idx % WORLD_SIZE == RANK] if rank>-1 else self.idx # see: SmartDistributedSampler (above)
             fcn = self.cache_images_to_disk if cache_images == 'disk' else self.load_image
             results = ThreadPool(NUM_THREADS).imap(lambda i: (i, fcn(i)) , self.idx)
-            pbar = tqdm(results, total=len(self.idx), bar_format=TQDM_BAR_FORMAT, disable=LOCAL_RANK > 0)
+            pbar = tqdm(results, total=WORLD_SIZE*len(self.idx), bar_format=TQDM_BAR_FORMAT, disable=LOCAL_RANK > 0)
             for i, x in pbar:
                 if cache_images == 'disk':
                     b += self.npy_files[i].stat().st_size
@@ -616,6 +614,7 @@ class LoadImagesAndLabels(Dataset):
                     self.ims[i], self.im_hw0[i], self.im_hw[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
                     b += self.ims[i].nbytes
                 pbar.desc = f'{prefix}Caching images ({b / gb:.1f}GB {cache_images})'
+                pbar.update(WORLD_SIZE)
             pbar.close()
 
     def check_cache_ram(self, safety_margin=0.1, prefix=''):
