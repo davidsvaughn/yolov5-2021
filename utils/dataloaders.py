@@ -34,6 +34,7 @@ from utils.general import (DATASETS_DIR, LOGGER, NUM_THREADS, TQDM_BAR_FORMAT, c
                            check_yaml, clean_str, cv2, is_colab, is_kaggle, segments2boxes, unzip_file, xyn2xy,
                            xywh2xyxy, xywhn2xyxy, xyxy2xywhn)
 from utils.torch_utils import torch_distributed_zero_first
+import torch.distributed as dist
 
 # Parameters
 HELP_URL = 'See https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
@@ -100,6 +101,33 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
+# Inherit from DistributedSampler and override iterator
+class SmartDistributedSampler(distributed.DistributedSampler):
+    def __iter__(self):
+        # deterministically shuffle based on epoch and seed
+        g = torch.Generator()
+        g.manual_seed(self.seed + self.epoch)
+        idx = torch.randperm(len(self.dataset), generator=g)
+        if not self.shuffle:
+            idx = idx.sort()[0]
+        
+        ## force each rank (GPU process) to sample the same subset of data every time
+        ## --> for space efficient caching when using DDP
+        idx = idx[idx%self.num_replicas==self.rank]
+
+        idx = idx.tolist()
+        if self.drop_last:
+            idx = idx[:self.num_samples]
+        else:
+            padding_size = self.num_samples - len(idx)
+            if padding_size <= len(idx):
+                idx += idx[:padding_size]
+            else:
+                idx += (idx * math.ceil(padding_size / len(idx)))[:padding_size]
+        
+        return iter(idx)
+
+
 def create_dataloader(path,
                       imgsz,
                       batch_size,
@@ -137,7 +165,7 @@ def create_dataloader(path,
     batch_size = min(batch_size, len(dataset))
     nd = torch.cuda.device_count()  # number of CUDA devices
     nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])  # number of workers
-    sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
+    sampler = None if rank == -1 else SmartDistributedSampler(dataset, shuffle=shuffle)
     loader = DataLoader if image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
     generator = torch.Generator()
     generator.manual_seed(6148914691236517205 + RANK)
@@ -524,7 +552,7 @@ class LoadImagesAndLabels(Dataset):
         nb = bi[-1] + 1  # number of batches
         self.batch = bi  # batch index of image
         self.n = n
-        self.indices = range(n)
+        self.indices = np.arange(n)
 
         # Update labels
         include_class = []  # filter labels to include only these classes (optional)
@@ -571,9 +599,12 @@ class LoadImagesAndLabels(Dataset):
         if cache_images:
             b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
             self.im_hw0, self.im_hw = [None] * n, [None] * n
+            if RANK>-1:
+                rank, world_size = dist.get_rank(), dist.get_world_size() # https://github.com/pytorch/pytorch/blob/master/torch/utils/data/distributed.py#L68
+                self.indices = self.indices[self.indices % world_size == rank] # subset of indices per GPU
             fcn = self.cache_images_to_disk if cache_images == 'disk' else self.load_image
-            results = ThreadPool(NUM_THREADS).imap(fcn, range(n))
-            pbar = tqdm(enumerate(results), total=n, bar_format=TQDM_BAR_FORMAT, disable=LOCAL_RANK > 0)
+            results = ThreadPool(NUM_THREADS).imap(lambda i: (i, fcn(i)) , self.indices)
+            pbar = tqdm(results, total=len(self.indices), bar_format=TQDM_BAR_FORMAT, disable=LOCAL_RANK > 0)
             for i, x in pbar:
                 if cache_images == 'disk':
                     b += self.npy_files[i].stat().st_size
