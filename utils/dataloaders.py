@@ -601,7 +601,12 @@ class LoadImagesAndLabels(Dataset):
             self.im_hw0, self.im_hw = [None] * n, [None] * n
             if RANK>-1:
                 rank, world_size = dist.get_rank(), dist.get_world_size() # https://github.com/pytorch/pytorch/blob/master/torch/utils/data/distributed.py#L68
+                if rank==0:
+                    print(f'RANK={rank}\tWORLD_SIZE={world_size}')
+                    print(f'len(self.indices)=\t{len(self.indices)}')
                 self.indices = self.indices[self.indices % world_size == rank] # subset of indices per GPU
+                if rank==0:
+                    print(f'len(self.indices)=\t{len(self.indices)}')
             fcn = self.cache_images_to_disk if cache_images == 'disk' else self.load_image
             results = ThreadPool(NUM_THREADS).imap(lambda i: (i, fcn(i)) , self.indices)
             pbar = tqdm(results, total=len(self.indices), bar_format=TQDM_BAR_FORMAT, disable=LOCAL_RANK > 0)
