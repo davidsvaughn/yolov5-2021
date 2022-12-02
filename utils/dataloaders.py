@@ -615,7 +615,9 @@ class LoadImagesAndLabels(Dataset):
                     self.ims[i], self.im_hw0[i], self.im_hw[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
                     b += self.ims[i].nbytes * m
                 pbar.desc = f'{prefix}Caching images ({b / gb:.1f}GB {cache_images})'
-                pbar.update(WORLD_SIZE)
+                pbar.update(m)
+            pbar.n = m*len(self.idx)
+            pbar.refresh()
             pbar.close()
 
     def check_cache_ram(self, safety_margin=0.1, prefix=''):
