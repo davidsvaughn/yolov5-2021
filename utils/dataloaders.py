@@ -165,8 +165,8 @@ def create_dataloader(path,
     batch_size = min(batch_size, len(dataset))
     nd = torch.cuda.device_count()  # number of CUDA devices
     nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])  # number of workers
-    sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
-    # sampler = None if rank == -1 else SmartDistributedSampler(dataset, shuffle=shuffle)
+    # sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
+    sampler = None if rank == -1 else SmartDistributedSampler(dataset, shuffle=shuffle)
     loader = DataLoader if image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
     generator = torch.Generator()
     generator.manual_seed(6148914691236517205 + RANK)
@@ -606,7 +606,7 @@ class LoadImagesAndLabels(Dataset):
                 if rank==0:
                     print(f'RANK={rank}\tWORLD_SIZE={world_size}')
                     print(f'len(self.idx)=\t{len(self.idx)}')
-                # self.idx = self.idx[self.idx % world_size == rank] # same subset of indices per GPU
+                self.idx = self.idx[self.idx % world_size == rank] # same subset of indices per GPU
                 if rank==0:
                     print(f'len(self.idx)=\t{len(self.idx)}')
             fcn = self.cache_images_to_disk if cache_images == 'disk' else self.load_image
