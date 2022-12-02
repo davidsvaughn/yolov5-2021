@@ -602,16 +602,14 @@ class LoadImagesAndLabels(Dataset):
         self.ims = [None] * n
         self.npy_files = [Path(f).with_suffix('.npy') for f in self.im_files]
         if cache_images:
-            b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+            b, gb, m = 0, 1 << 30, 1  # bytes of cached images, bytes per gigabytes, cache multiplier
             self.im_hw0, self.im_hw = [None] * n, [None] * n
             if rank>-1:
-                # RANK, WORLD_SIZE = dist.get_rank(), dist.get_world_size() # https://github.com/pytorch/pytorch/blob/master/torch/utils/data/distributed.py#L68
-                if RANK==0:
-                    print(f'RANK={RANK}\tWORLD_SIZE={WORLD_SIZE}')
-                    print(f'len(self.idx)=\t{len(self.idx)}')
+                # distributed.DistributedSampler gets RANK and WORLD_SIZE from dist.get_rank(), dist.get_world_size()
+                # https://github.com/pytorch/pytorch/blob/master/torch/utils/data/distributed.py#L68
+                # RANK, WORLD_SIZE = dist.get_rank(), dist.get_world_size() # do this to stay in synch with DistributedSampler ?
                 self.idx = self.idx[self.idx % WORLD_SIZE == RANK] # same subset of indices per GPU
-                if RANK==0:
-                    print(f'len(self.idx)=\t{len(self.idx)}')
+                m = WORLD_SIZE
             fcn = self.cache_images_to_disk if cache_images == 'disk' else self.load_image
             results = ThreadPool(NUM_THREADS).imap(lambda i: (i, fcn(i)) , self.idx)
             pbar = tqdm(results, total=len(self.idx), bar_format=TQDM_BAR_FORMAT, disable=LOCAL_RANK > 0)
@@ -620,7 +618,7 @@ class LoadImagesAndLabels(Dataset):
                     b += self.npy_files[i].stat().st_size
                 else:  # 'ram'
                     self.ims[i], self.im_hw0[i], self.im_hw[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
-                    b += self.ims[i].nbytes
+                    b += self.ims[i].nbytes * m # using cache multiplier (m) to estimate total RAM usage (DDP + SmartDistributedSampler)
                 pbar.desc = f'{prefix}Caching images ({b / gb:.1f}GB {cache_images})'
             pbar.close()
 
