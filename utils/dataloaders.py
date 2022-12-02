@@ -42,6 +42,7 @@ IMG_FORMATS = 'bmp', 'dng', 'jpeg', 'jpg', 'mpo', 'png', 'tif', 'tiff', 'webp', 
 VID_FORMATS = 'asf', 'avi', 'gif', 'm4v', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'ts', 'wmv'  # include video suffixes
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
+WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 PIN_MEMORY = str(os.getenv('PIN_MEMORY', True)).lower() == 'true'  # global pin_memory for dataloaders
 
 # Get orientation exif tag
@@ -155,6 +156,7 @@ def create_dataloader(path,
             augment=augment,  # augmentation
             hyp=hyp,  # hyperparameters
             rect=rect,  # rectangular batches
+            rank=rank, # train? or val?
             cache_images=cache,
             single_cls=single_cls,
             stride=int(stride),
@@ -469,6 +471,7 @@ class LoadImagesAndLabels(Dataset):
                  augment=False,
                  hyp=None,
                  rect=False,
+                 rank=-1,
                  image_weights=False,
                  cache_images=False,
                  single_cls=False,
@@ -601,13 +604,13 @@ class LoadImagesAndLabels(Dataset):
         if cache_images:
             b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
             self.im_hw0, self.im_hw = [None] * n, [None] * n
-            if RANK>-1:
-                rank, world_size = dist.get_rank(), dist.get_world_size() # https://github.com/pytorch/pytorch/blob/master/torch/utils/data/distributed.py#L68
-                if rank==0:
-                    print(f'RANK={rank}\tWORLD_SIZE={world_size}')
+            if rank>-1:
+                # RANK, WORLD_SIZE = dist.get_rank(), dist.get_world_size() # https://github.com/pytorch/pytorch/blob/master/torch/utils/data/distributed.py#L68
+                if RANK==0:
+                    print(f'RANK={RANK}\tWORLD_SIZE={WORLD_SIZE}')
                     print(f'len(self.idx)=\t{len(self.idx)}')
-                self.idx = self.idx[self.idx % world_size == rank] # same subset of indices per GPU
-                if rank==0:
+                self.idx = self.idx[self.idx % WORLD_SIZE == RANK] # same subset of indices per GPU
+                if RANK==0:
                     print(f'len(self.idx)=\t{len(self.idx)}')
             fcn = self.cache_images_to_disk if cache_images == 'disk' else self.load_image
             results = ThreadPool(NUM_THREADS).imap(lambda i: (i, fcn(i)) , self.idx)
