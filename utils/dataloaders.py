@@ -594,8 +594,8 @@ class LoadImagesAndLabels(Dataset):
             self.batch_shapes = np.ceil(np.array(shapes) * img_size / stride + pad).astype(int) * stride
 
         # Cache images into RAM/disk for faster training
-        if cache_images == 'ram' and not self.check_cache_ram(prefix=prefix):
-            cache_images = False
+        # if cache_images == 'ram' and not self.check_cache_ram(prefix=prefix):
+        #     cache_images = False
         self.ims = [None] * n
         self.npy_files = [Path(f).with_suffix('.npy') for f in self.im_files]
         if cache_images:
