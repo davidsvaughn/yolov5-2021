@@ -552,7 +552,8 @@ class LoadImagesAndLabels(Dataset):
         nb = bi[-1] + 1  # number of batches
         self.batch = bi  # batch index of image
         self.n = n
-        self.indices = np.arange(n)
+        self.indices = range(n)
+        self.idx = np.array(self.indices)
 
         # Update labels
         include_class = []  # filter labels to include only these classes (optional)
@@ -603,13 +604,13 @@ class LoadImagesAndLabels(Dataset):
                 rank, world_size = dist.get_rank(), dist.get_world_size() # https://github.com/pytorch/pytorch/blob/master/torch/utils/data/distributed.py#L68
                 if rank==0:
                     print(f'RANK={rank}\tWORLD_SIZE={world_size}')
-                    print(f'len(self.indices)=\t{len(self.indices)}')
-                self.indices = self.indices[self.indices % world_size == rank] # subset of indices per GPU
+                    print(f'len(self.idx)=\t{len(self.idx)}')
+                self.idx = self.idx[self.idx % world_size == rank] # same subset of indices per GPU
                 if rank==0:
-                    print(f'len(self.indices)=\t{len(self.indices)}')
+                    print(f'len(self.idx)=\t{len(self.idx)}')
             fcn = self.cache_images_to_disk if cache_images == 'disk' else self.load_image
-            results = ThreadPool(NUM_THREADS).imap(lambda i: (i, fcn(i)) , self.indices)
-            pbar = tqdm(results, total=len(self.indices), bar_format=TQDM_BAR_FORMAT, disable=LOCAL_RANK > 0)
+            results = ThreadPool(NUM_THREADS).imap(lambda i: (i, fcn(i)) , self.idx)
+            pbar = tqdm(results, total=len(self.idx), bar_format=TQDM_BAR_FORMAT, disable=LOCAL_RANK > 0)
             for i, x in pbar:
                 if cache_images == 'disk':
                     b += self.npy_files[i].stat().st_size
@@ -785,7 +786,7 @@ class LoadImagesAndLabels(Dataset):
         labels4, segments4 = [], []
         s = self.img_size
         yc, xc = (int(random.uniform(-x, 2 * s + x)) for x in self.mosaic_border)  # mosaic center x, y
-        indices = [index] + random.choices(self.indices, k=3)  # 3 additional image indices
+        indices = [index] + random.choices(self.idx, k=3)  # 3 additional image indices
         random.shuffle(indices)
         for i, index in enumerate(indices):
             # Load image
@@ -842,7 +843,7 @@ class LoadImagesAndLabels(Dataset):
         # YOLOv5 9-mosaic loader. Loads 1 image + 8 random images into a 9-image mosaic
         labels9, segments9 = [], []
         s = self.img_size
-        indices = [index] + random.choices(self.indices, k=8)  # 8 additional image indices
+        indices = [index] + random.choices(self.idx, k=8)  # 8 additional image indices
         random.shuffle(indices)
         hp, wp = -1, -1  # height, width previous
         for i, index in enumerate(indices):
