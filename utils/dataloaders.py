@@ -597,17 +597,14 @@ class LoadImagesAndLabels(Dataset):
             self.batch_shapes = np.ceil(np.array(shapes) * img_size / stride + pad).astype(int) * stride
 
         # Cache images into RAM/disk for faster training
-        # if cache_images == 'ram' and not self.check_cache_ram(prefix=prefix):
-        #     cache_images = False
+        if cache_images == 'ram' and not self.check_cache_ram(prefix=prefix):
+            cache_images = False
         self.ims = [None] * n
         self.npy_files = [Path(f).with_suffix('.npy') for f in self.im_files]
         if cache_images:
             b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
             self.im_hw0, self.im_hw = [None] * n, [None] * n
             if rank>-1:
-                # distributed.DistributedSampler gets RANK and WORLD_SIZE from dist.get_rank(), dist.get_world_size()
-                # https://github.com/pytorch/pytorch/blob/master/torch/utils/data/distributed.py#L68
-                # RANK, WORLD_SIZE = dist.get_rank(), dist.get_world_size() # do this to stay in synch with DistributedSampler ?
                 self.idx = self.idx[self.idx % WORLD_SIZE == RANK] # same subset of indices per GPU
             fcn = self.cache_images_to_disk if cache_images == 'disk' else self.load_image
             results = ThreadPool(NUM_THREADS).imap(lambda i: (i, fcn(i)) , self.idx)
