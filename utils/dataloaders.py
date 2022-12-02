@@ -604,17 +604,18 @@ class LoadImagesAndLabels(Dataset):
             b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
             self.im_hw0, self.im_hw = [None] * n, [None] * n
             self.idx = self.idx[self.idx % WORLD_SIZE == RANK] if rank>-1 else self.idx # see: SmartDistributedSampler (above)
+            m = WORLD_SIZE if rank>-1 else 1 # tqdm multiplier (DDP)
             fcn = self.cache_images_to_disk if cache_images == 'disk' else self.load_image
             results = ThreadPool(NUM_THREADS).imap(lambda i: (i, fcn(i)) , self.idx)
-            pbar = tqdm(results, total=WORLD_SIZE*len(self.idx), bar_format=TQDM_BAR_FORMAT, disable=LOCAL_RANK > 0)
+            pbar = tqdm(results, total=m*len(self.idx), bar_format=TQDM_BAR_FORMAT, disable=LOCAL_RANK > 0)
             for i, x in pbar:
                 if cache_images == 'disk':
                     b += self.npy_files[i].stat().st_size
                 else:  # 'ram'
                     self.ims[i], self.im_hw0[i], self.im_hw[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
-                    b += self.ims[i].nbytes
+                    b += self.ims[i].nbytes * m
                 pbar.desc = f'{prefix}Caching images ({b / gb:.1f}GB {cache_images})'
-                pbar.update(WORLD_SIZE)
+                pbar.update(m)
             pbar.close()
 
     def check_cache_ram(self, safety_margin=0.1, prefix=''):
