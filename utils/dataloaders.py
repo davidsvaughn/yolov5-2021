@@ -109,15 +109,11 @@ class SmartDistributedSampler(distributed.DistributedSampler):
         g = torch.Generator()
         g.manual_seed(self.seed + self.epoch)
 
-        # determine the the eventual size (n) of self.idx (DDP indices)
+        # determine the the eventual size (n) of self.indices (DDP indices)
         n = int( (len(self.dataset)-self.rank-1)/self.num_replicas ) + 1 # num_replicas == WORLD_SIZE
         idx = torch.randperm(n, generator=g)
         if not self.shuffle:
             idx = idx.sort()[0]
-
-        # force each rank (i.e. GPU process) to sample the same subset of data every epoch
-        # idx = idx[idx % self.num_replicas == self.rank] # num_replicas == WORLD_SIZE
-        # idx = torch.div(idx, self.num_replicas, rounding_mode='floor')
 
         idx = idx.tolist()
         if self.drop_last:
@@ -159,13 +155,13 @@ def create_dataloader(path,
             augment=augment,  # augmentation
             hyp=hyp,  # hyperparameters
             rect=rect,  # rectangular batches
-            rank=rank,
             cache_images=cache,
             single_cls=single_cls,
             stride=int(stride),
             pad=pad,
             image_weights=image_weights,
-            prefix=prefix)
+            prefix=prefix,
+            rank=rank)
 
     batch_size = min(batch_size, len(dataset))
     nd = torch.cuda.device_count()  # number of CUDA devices
@@ -561,6 +557,7 @@ class LoadImagesAndLabels(Dataset):
         self.n = n
         self.indices = np.arange(n)
         if rank>-1: # DDP indices (see: SmartDistributedSampler)
+            # force each rank (i.e. GPU process) to sample the same subset of data on every epoch
             self.indices = self.indices[np.random.RandomState(seed=seed).permutation(n) % WORLD_SIZE == RANK]
 
         # Update labels
