@@ -54,9 +54,10 @@
 
 <div align="center">
 
-We're excited to announce our very first [Ultralytics Live Session](https://www.youtube.com/@Ultralytics/streams) ✨ streaming live at https://youtu.be/KS4weDInJYs on **Tuesday, November 29th at 16:00 CET** with [@thepycoder](https://github.com/thepycoder) of [ClearML](https://cutt.ly/yolov5-readme-clearml). Glenn and Victor will discuss all things experiment tracking and how you can maximize the benefits of the new YOLOv5 + ClearML [integration](https://github.com/ultralytics/yolov5/tree/master/utils/loggers/clearml). 🔥
+[Ultralytics Live Session Ep. 2](https://youtu.be/LKpuzZllNpA) ✨ will be streaming live on **Tuesday, December 13th at 19:00 CET** with [Joseph Nelson](https://github.com/josephofiowa) of [Roboflow](https://roboflow.com/?ref=ultralytics) who will join us to discuss the brand new Roboflow x Ultralytics HUB integration. Tune in to ask Glenn and Joseph about how you can make speed up workflows with seamless dataset integration! 🔥
 
-<a align="center" href="https://youtu.be/KS4weDInJYs" target="_blank"><img width="800" src="https://user-images.githubusercontent.com/85292283/203834465-fa67ead1-d87b-4212-8a1d-acfd4d8e7226.png"></a>
+<a align="center" href="https://youtu.be/LKpuzZllNpA" target="_blank">
+<img width="800" src="https://user-images.githubusercontent.com/85292283/205996456-bf3efa33-9c46-455e-b322-a64886cc7a0b.png"></a>
 </div>
 
 ## <div align="center">Segmentation ⭐ NEW</div>
@@ -182,14 +183,16 @@ results.print()  # or .show(), .save(), .crop(), .pandas(), etc.
 the latest YOLOv5 [release](https://github.com/ultralytics/yolov5/releases) and saving results to `runs/detect`.
 
 ```bash
-python detect.py --source 0  # webcam
-                          img.jpg  # image
-                          vid.mp4  # video
-                          screen  # screenshot
-                          path/  # directory
-                          'path/*.jpg'  # glob
-                          'https://youtu.be/Zgi9g1ksQHc'  # YouTube
-                          'rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP stream
+python detect.py --weights yolov5s.pt --source 0                               # webcam
+                                               img.jpg                         # image
+                                               vid.mp4                         # video
+                                               screen                          # screenshot
+                                               path/                           # directory
+                                               list.txt                        # list of images
+                                               list.streams                    # list of streams
+                                               'path/*.jpg'                    # glob
+                                               'https://youtu.be/Zgi9g1ksQHc'  # YouTube
+                                               'rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP stream
 ```
 
 </details>
