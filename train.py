@@ -205,8 +205,9 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
 
     # # Valloader
     val_batch_size = 1
-    # val_batch_size = 4
-    # val_batch_size = batch_size // WORLD_SIZE,
+    val_batch_size = 4
+    val_batch_size = batch_size // WORLD_SIZE
+    print(f'RANK:{RANK}-val_batch_size:{val_batch_size}    ')
     val_loader_ddp = create_dataloader(val_path,
                                    imgsz,
                                    val_batch_size, #batch_size // WORLD_SIZE,
