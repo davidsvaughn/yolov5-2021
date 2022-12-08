@@ -342,7 +342,7 @@ def run(
 def gather_tensors(t, device, dim=6):
     shape = torch.tensor(t.shape).to(device)
 
-    print(f'RANK: {RANK}\tshape: {shape}')
+    print(f'RANK:{RANK}-shape:{shape}    ')
 
     out_shapes = [torch.zeros_like(shape, device=device) for _ in range(WORLD_SIZE)]
     dist.all_gather(out_shapes, shape)

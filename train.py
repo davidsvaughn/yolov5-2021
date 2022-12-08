@@ -204,9 +204,11 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
 
     # # Valloader
+    val_batch_size = 1
+    val_batch_size = 4
     val_loader_ddp = create_dataloader(val_path,
                                    imgsz,
-                                   1, #batch_size // WORLD_SIZE,
+                                   val_batch_size, #batch_size // WORLD_SIZE,
                                    gs,
                                    single_cls,
                                    hyp=hyp,
@@ -406,7 +408,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         # DDP Stuff
         # deepcopy(de_parallel(model)).half(),
         results, maps, _ = validate.run_ddp(data_dict,
-                                            batch_size=1, #batch_size // WORLD_SIZE * 2,
+                                            batch_size=val_batch_size, #batch_size // WORLD_SIZE * 2,
                                             imgsz=imgsz,
                                             half=False, #amp,
                                             model=de_parallel(model), #ema.ema,
