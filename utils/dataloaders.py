@@ -564,6 +564,11 @@ class LoadImagesAndLabels(Dataset):
             indices = self.indices if self.rect else np.random.RandomState(seed=seed).permutation(n)
             # force each rank (i.e. GPU process) to sample the same subset of data on every epoch
             self.indices = self.indices[indices % WORLD_SIZE == RANK]
+            ###
+            self.num_samples = math.ceil(len(self.shapes) / WORLD_SIZE)
+            bi = np.floor(np.arange(self.num_samples) / batch_size).astype(int)  # batch index
+            nb = bi[-1] + 1  # number of batches
+            self.batch = bi  # batch index of image
 
         # Update labels
         include_class = []  # filter labels to include only these classes (optional)
@@ -590,6 +595,16 @@ class LoadImagesAndLabels(Dataset):
             self.shapes = s[irect]  # wh
             ar = ar[irect]
 
+            # DDP shapes
+            if rank > -1:
+                indices = self.indices
+                padding_size = self.num_samples - len(indices)
+                if padding_size <= len(indices):
+                    indices += indices[:padding_size]
+                else:
+                    indices += (indices * math.ceil(padding_size / len(indices)))[:padding_size]
+                ar = ar[indices]
+
             # Set training image shapes
             shapes = [[1, 1]] * nb
             for i in range(nb):
@@ -601,6 +616,7 @@ class LoadImagesAndLabels(Dataset):
                     shapes[i] = [1, 1 / mini]
 
             self.batch_shapes = np.ceil(np.array(shapes) * img_size / stride + pad).astype(int) * stride
+
 
         # Cache images into RAM/disk for faster training
         if cache_images == 'ram' and not self.check_cache_ram(prefix=prefix):
