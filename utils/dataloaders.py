@@ -564,11 +564,15 @@ class LoadImagesAndLabels(Dataset):
             indices = self.indices if self.rect else np.random.RandomState(seed=seed).permutation(n)
             # force each rank (i.e. GPU process) to sample the same subset of data on every epoch
             self.indices = self.indices[indices % WORLD_SIZE == RANK]
-            ###
-            self.num_samples = math.ceil(len(self.shapes) / WORLD_SIZE)
-            bi = np.floor(np.arange(self.num_samples) / batch_size).astype(int)  # batch index
+            ### try (2)
+            bi = np.floor(np.arange(n) / (batch_size * WORLD_SIZE)).astype(int)  # batch index
             nb = bi[-1] + 1  # number of batches
             self.batch = bi  # batch index of image
+            ### try (1)
+            # self.num_samples = math.ceil(len(self.shapes) / WORLD_SIZE)
+            # bi = np.floor(np.arange(self.num_samples) / batch_size).astype(int)  # batch index
+            # nb = bi[-1] + 1  # number of batches
+            # self.batch = bi  # batch index of image
 
         # Update labels
         include_class = []  # filter labels to include only these classes (optional)
@@ -596,17 +600,17 @@ class LoadImagesAndLabels(Dataset):
             ar = ar[irect]
 
             # DDP shapes
-            if rank > -1:
-                indices = self.indices
-                padding_size = self.num_samples - len(indices)
-                print(f'RANK:{RANK}-num_samples:{self.num_samples}    ')
-                print(f'RANK:{RANK}-indices:{indices}    ')
-                print(f'RANK:{RANK}-padding_size:{padding_size}    ')
-                if padding_size <= len(indices):
-                    if padding_size: indices += indices[:padding_size]
-                else:
-                    indices += (indices * math.ceil(padding_size / len(indices)))[:padding_size]
-                ar = ar[indices]
+            # if rank > -1:
+            #     indices = self.indices
+            #     padding_size = self.num_samples - len(indices)
+            #     print(f'RANK:{RANK}-num_samples:{self.num_samples}    ')
+            #     print(f'RANK:{RANK}-indices:{indices}    ')
+            #     print(f'RANK:{RANK}-padding_size:{padding_size}    ')
+            #     if padding_size <= len(indices):
+            #         if padding_size: indices += indices[:padding_size]
+            #     else:
+            #         indices += (indices * math.ceil(padding_size / len(indices)))[:padding_size]
+            #     ar = ar[indices]
 
             # Set training image shapes
             shapes = [[1, 1]] * nb
