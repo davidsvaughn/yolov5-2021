@@ -599,11 +599,9 @@ class LoadImagesAndLabels(Dataset):
             if rank > -1:
                 indices = self.indices
                 padding_size = self.num_samples - len(indices)
-
                 print(f'RANK:{RANK}-num_samples:{self.num_samples}    ')
                 print(f'RANK:{RANK}-indices:{indices}    ')
                 print(f'RANK:{RANK}-padding_size:{padding_size}    ')
-
                 if padding_size <= len(indices):
                     if padding_size: indices += indices[:padding_size]
                 else:
@@ -621,6 +619,9 @@ class LoadImagesAndLabels(Dataset):
                     shapes[i] = [1, 1 / mini]
 
             self.batch_shapes = np.ceil(np.array(shapes) * img_size / stride + pad).astype(int) * stride
+
+            if rank > -1:
+                print(f'RANK:{RANK}-batch_shapes:{self.batch_shapes}    ')
 
 
         # Cache images into RAM/disk for faster training
