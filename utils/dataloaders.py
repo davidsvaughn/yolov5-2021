@@ -603,9 +603,9 @@ class LoadImagesAndLabels(Dataset):
                 print(f'RANK:{RANK}-indices:{indices}    ')
                 print(f'RANK:{RANK}-padding_size:{padding_size}    ')
 
-                if padding_size <= len(indices):
+                if padding_size < len(indices):
                     indices += indices[:padding_size]
-                else:
+                elif padding_size > len(indices):
                     indices += (indices * math.ceil(padding_size / len(indices)))[:padding_size]
                 ar = ar[indices]
 
