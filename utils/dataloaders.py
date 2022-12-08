@@ -599,6 +599,10 @@ class LoadImagesAndLabels(Dataset):
             if rank > -1:
                 indices = self.indices
                 padding_size = self.num_samples - len(indices)
+
+                print(f'RANK:{RANK}-indices:{indices}    ')
+                print(f'RANK:{RANK}-padding_size:{padding_size}    ')
+
                 if padding_size <= len(indices):
                     indices += indices[:padding_size]
                 else:
