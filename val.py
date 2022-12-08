@@ -497,13 +497,13 @@ def run_ddp(
 
         ## imgs[0].shape
         hw = torch.tensor([height, width]).to(device)
-        all_hw = [torch.zeros_like(hw, device=device) for _ in range(opt.world_size)]
+        all_hw = [torch.zeros_like(hw, device=device) for _ in range(WORLD_SIZE)]
         dist.all_gather(all_hw, hw)
 
         ## shapes
         s = shapes[0]
         t = torch.tensor(s[0] + s[1][0] + s[1][1]).to(device)
-        all_shapes = [torch.zeros_like(t, device=device) for _ in range(opt.world_size)]
+        all_shapes = [torch.zeros_like(t, device=device) for _ in range(WORLD_SIZE)]
         dist.all_gather(all_shapes, t)
 
         if RANK in {-1, 0}:
