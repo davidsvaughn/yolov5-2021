@@ -600,6 +600,7 @@ class LoadImagesAndLabels(Dataset):
                 indices = self.indices
                 padding_size = self.num_samples - len(indices)
 
+                print(f'RANK:{RANK}-num_samples:{self.num_samples}    ')
                 print(f'RANK:{RANK}-indices:{indices}    ')
                 print(f'RANK:{RANK}-padding_size:{padding_size}    ')
 
