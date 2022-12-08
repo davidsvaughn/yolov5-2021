@@ -341,6 +341,9 @@ def run(
 
 def gather_tensors(t, device, dim=6):
     shape = torch.tensor(t.shape).to(device)
+
+    print(f'RANK: {RANK}\tshape: {shape}')
+
     out_shapes = [torch.zeros_like(shape, device=device) for _ in range(WORLD_SIZE)]
     dist.all_gather(out_shapes, shape)
     my_dim = int(shape[0])
@@ -513,7 +516,7 @@ def run_ddp(
             # all_shapes = torch.stack(all_shapes, dim=0)
             preds = all_preds
             for j,targets in enumerate(all_targets):
-                targets[:,0] = j ## restore indices
+                targets[:,0] = j ## restore global indices
             targets = torch.cat(all_targets, 0)
             shapes = []
             for t in all_shapes:

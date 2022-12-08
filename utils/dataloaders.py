@@ -560,8 +560,10 @@ class LoadImagesAndLabels(Dataset):
         self.n = n
         self.indices = np.arange(n)
         if rank > -1:  # DDP indices (see: SmartDistributedSampler)
+            # randomize the partitioning of images across GPU processes (for mosaic)
+            indices = self.indices if self.rect else np.random.RandomState(seed=seed).permutation(n)
             # force each rank (i.e. GPU process) to sample the same subset of data on every epoch
-            self.indices = self.indices[np.random.RandomState(seed=seed).permutation(n) % WORLD_SIZE == RANK]
+            self.indices = self.indices[indices % WORLD_SIZE == RANK]
 
         # Update labels
         include_class = []  # filter labels to include only these classes (optional)
