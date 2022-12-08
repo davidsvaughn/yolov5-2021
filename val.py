@@ -494,8 +494,13 @@ def run_ddp(
         ###############################################################
         ## DDP stuff...
         ## gather outputs from all DDP processes...
-        preds = preds[0] ## only works with batch_size==1 (for now...)
+        if batch_size==1:
+            preds = preds[0] ## only works with batch_size==1 (for now...)
+        
+        if RANK in {-1, 0}: print('\nGATHER: preds...')
         all_preds = gather_tensors(preds, device)
+
+        if RANK in {-1, 0}: print('\nGATHER: targets...')
         all_targets = gather_tensors(targets, device)
 
         ## imgs[0].shape
