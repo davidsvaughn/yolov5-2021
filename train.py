@@ -203,6 +203,20 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     mlc = int(labels[:, 0].max())  # max label class
     assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
 
+    # # Valloader
+    val_loader_ddp = create_dataloader(val_path,
+                                   imgsz,
+                                   1, #batch_size // WORLD_SIZE,
+                                   gs,
+                                   single_cls,
+                                   hyp=hyp,
+                                   cache=None if noval else opt.cache,
+                                   rect=True,
+                                   rank=LOCAL_RANK,
+                                   workers=workers,
+                                   pad=0.5,
+                                   prefix=colorstr('val: '))[0]
+
     # Process 0
     if RANK in {-1, 0}:
         val_loader = create_dataloader(val_path,
@@ -388,6 +402,24 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                     torch.save(ckpt, w / f'epoch{epoch}.pt')
                 del ckpt
                 callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
+
+        # DDP Stuff
+        results, maps, _ = validate.run_ddp(data_dict,
+                                            batch_size=1, #batch_size // WORLD_SIZE * 2,
+                                            imgsz=imgsz,
+                                            half=False, #amp,
+                                            model=ema.ema,
+                                            single_cls=single_cls,
+                                            dataloader=val_loader_ddp,
+                                            save_dir=save_dir,
+                                            plots=False,
+                                            callbacks=callbacks,
+                                            compute_loss=False, #compute_loss,
+                                            )
+        # if RANK in {-1, 0}:
+        #     log_vals = list(mloss) + list(results) + lr
+        #     print(log_vals)
+
 
         # EarlyStopping
         if RANK != -1:  # if DDP training
