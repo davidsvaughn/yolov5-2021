@@ -360,6 +360,9 @@ def gather_tensors(t, device, dim=6):
         return outputs
     return None
 
+def gather_tensor_list(tl, device):
+    return [gather_tensors(t, device) for t in tl]
+
 @smart_inference_mode()
 def run_ddp(
         data,
@@ -496,11 +499,10 @@ def run_ddp(
         ###############################################################
         ## DDP stuff...
         ## gather outputs from all DDP processes...
-        if batch_size==1:
-            preds = preds[0] ## only works with batch_size==1 (for now...)
+        # if batch_size==1: preds = preds[0] ## only works with batch_size==1 (for now...)
         
         if RANK in {-1, 0}: print('\nGATHER: preds...')
-        all_preds = gather_tensors(preds, device)
+        all_preds = gather_tensor_list(preds, device)
 
         if RANK in {-1, 0}: print('\nGATHER: targets...')
         all_targets = gather_tensors(targets, device)
