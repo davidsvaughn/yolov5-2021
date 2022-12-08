@@ -340,8 +340,10 @@ def run(
     return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, t
 
 def gather_tensors(t, device, dim=6):
-    shape = torch.tensor(t.shape).to(device)
+    shapes = [torch.tensor(tt.shape).to(device) for tt in t]
+    print(f'RANK:{RANK}-shapes:{shapes}    ')
 
+    shape = torch.tensor(t.shape).to(device)
     print(f'RANK:{RANK}-shape:{shape}    ')
 
     out_shapes = [torch.zeros_like(shape, device=device) for _ in range(WORLD_SIZE)]
