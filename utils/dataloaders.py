@@ -569,15 +569,17 @@ class LoadImagesAndLabels(Dataset):
             nb = bi[-1] + 1  # number of batches
             self.batch = bi  # batch index of image
 
-            if self.rect:
-                print(f'RANK:{RANK}-self.indices:{self.indices}    ')
-                print(f'RANK:{RANK}-self.batch:{self.batch}    ')
-
             ### try (1)
             # self.num_samples = math.ceil(len(self.shapes) / WORLD_SIZE)
             # bi = np.floor(np.arange(self.num_samples) / batch_size).astype(int)  # batch index
             # nb = bi[-1] + 1  # number of batches
             # self.batch = bi  # batch index of image
+
+            ### DEBUG...
+            if self.rect:
+                print(f'RANK:{RANK}-self.indices:{self.indices}    ')
+                print(f'RANK:{RANK}-self.batch:{self.batch}    ')
+                print(f'RANK:{RANK}-nb:{nb}    ')
 
         # Update labels
         include_class = []  # filter labels to include only these classes (optional)
