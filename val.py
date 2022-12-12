@@ -359,10 +359,7 @@ def gather_tensors(t, device, dim=6):
     return None
 
 def gather_tensor_list(tl, device):
-    all_tensors = []
-    for t in tl:
-        all_tensors.extend(gather_tensors(t, device))
-    return all_tensors
+    return [gather_tensors(t, device) for t in tl]
 
 @smart_inference_mode()
 def run_ddp(
@@ -524,8 +521,11 @@ def run_ddp(
             # all_targets = torch.cat(all_targets, dim=0)
             # all_hw = torch.stack(all_hw, dim=0)
             # all_shapes = torch.stack(all_shapes, dim=0)
-            preds = all_preds
+            preds = list(itertools.chain.from_iterable(all_preds))
+
             print('ALL_PREDS   ')
+            # for i,pred in enumerate(preds):
+            #     print(i)
             [print(f'{p.shape}\n') for p in preds]
 
             print(f'\nALL_TARGETS (before):{all_targets}    ')
