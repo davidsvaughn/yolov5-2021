@@ -205,7 +205,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
 
     # # Valloader
     val_batch_size = 1
-    # val_batch_size = 4
+    val_batch_size = 2
     # val_batch_size = batch_size // WORLD_SIZE
     print(f'RANK:{RANK}-val_batch_size:{val_batch_size}    ')
     val_loader_ddp = create_dataloader(val_path,
@@ -225,7 +225,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     if RANK in {-1, 0}:
         val_loader = create_dataloader(val_path,
                                        imgsz,
-                                       batch_size // WORLD_SIZE * 2,
+                                       val_batch_size, #batch_size // WORLD_SIZE * 2,
                                        gs,
                                        single_cls,
                                        hyp=hyp,
@@ -366,7 +366,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
             final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
             if not noval or final_epoch:  # Calculate mAP
                 results, maps, _ = validate.run(data_dict,
-                                                batch_size=batch_size // WORLD_SIZE * 2,
+                                                batch_size=val_batch_size, #batch_size // WORLD_SIZE * 2,
                                                 imgsz=imgsz,
                                                 half=amp,
                                                 model=ema.ema,
