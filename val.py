@@ -529,7 +529,8 @@ def run_ddp(
             print(f'\nALL_TARGETS (before):{all_targets}    ')
 
             for j,targets in enumerate(all_targets):
-                targets[:,0] = j ## restore global indices
+                # targets[:,0] = j ## restore global indices
+                targets[:,0] = targets[:,0] * WORLD_SIZE + j ## restore global indices
             targets = torch.cat(all_targets, 0)
 
             print(f'\nALL_TARGETS (after):{all_targets}    ')
