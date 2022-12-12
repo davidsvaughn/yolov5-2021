@@ -568,6 +568,11 @@ class LoadImagesAndLabels(Dataset):
             bi = np.floor(np.arange(n) / (batch_size * WORLD_SIZE)).astype(int)  # batch index
             nb = bi[-1] + 1  # number of batches
             self.batch = bi  # batch index of image
+
+            if self.rect:
+                print(f'RANK:{RANK}-self.indices:{self.indices}    ')
+                print(f'RANK:{RANK}-self.batch:{self.batch}    ')
+
             ### try (1)
             # self.num_samples = math.ceil(len(self.shapes) / WORLD_SIZE)
             # bi = np.floor(np.arange(self.num_samples) / batch_size).astype(int)  # batch index
