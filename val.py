@@ -522,7 +522,8 @@ def run_ddp(
             # all_shapes = torch.stack(all_shapes, dim=0)
             preds = all_preds
             print('ALL_PREDS   ')
-            for pred in preds:
+            for i,pred in enumerate(preds):
+                print(i)
                 [print(f'{p.shape}\n') for p in pred]
 
             print(f'\nALL_TARGETS (before):{all_targets}    ')
