@@ -29,6 +29,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from contextlib import nullcontext
+import itertools
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -358,7 +359,10 @@ def gather_tensors(t, device, dim=6):
     return None
 
 def gather_tensor_list(tl, device):
-    return [gather_tensors(t, device) for t in tl]
+    all_tensors = []
+    for t in tl:
+        all_tensors.extend(gather_tensors(t, device))
+    return all_tensors
 
 @smart_inference_mode()
 def run_ddp(
@@ -522,9 +526,7 @@ def run_ddp(
             # all_shapes = torch.stack(all_shapes, dim=0)
             preds = all_preds
             print('ALL_PREDS   ')
-            for i,pred in enumerate(preds):
-                print(i)
-                [print(f'{p.shape}\n') for p in pred]
+            [print(f'{p.shape}\n') for p in preds]
 
             print(f'\nALL_TARGETS (before):{all_targets}    ')
 
