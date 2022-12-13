@@ -204,10 +204,10 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
 
     # # Valloader
-    val_batch_size_ddp = 1
-    val_batch_size_ddp = 2
+    # val_batch_size, val_batch_size_ddp = 8, 2
+    val_batch_size = val_batch_size_ddp = batch_size // WORLD_SIZE * 2
+    
     # val_batch_size = batch_size // WORLD_SIZE
-    # print(f'RANK:{RANK}-val_batch_size_ddp:{val_batch_size_ddp}    ')
     val_loader_ddp = create_dataloader(val_path,
                                    imgsz,
                                    val_batch_size_ddp, #batch_size // WORLD_SIZE,
@@ -222,7 +222,6 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                                    prefix=colorstr('val: '))[0]
 
     # Process 0
-    val_batch_size = 8
     if RANK in {-1, 0}:
         val_loader = create_dataloader(val_path,
                                        imgsz,
