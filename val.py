@@ -342,16 +342,17 @@ def run(
 
 def gather_tensors(t, device, dim=6):
     shape = torch.tensor(t.shape).to(device)
+    d1,d2 = int(shape[0]), int(shape[1])
     print(f'RANK:{RANK}-shape:{shape}    ')
 
     out_shapes = [torch.zeros_like(shape, device=device) for _ in range(WORLD_SIZE)]
     dist.all_gather(out_shapes, shape)
-    my_dim = int(shape[0])
+
     all_dims = [int(x[0]) for x in out_shapes]
     max_dim = max(all_dims)
-    output_list = [torch.zeros([max_dim,dim], device=device) for _ in range(WORLD_SIZE)]
-    padded_output = torch.zeros([max_dim,dim], device=device)
-    padded_output[:my_dim,:] = t
+    output_list = [torch.zeros([max_dim, d2], device=device) for _ in range(WORLD_SIZE)]
+    padded_output = torch.zeros([max_dim, d2], device=device)
+    padded_output[:d1,:] = t
     dist.all_gather(output_list, padded_output)
     if RANK in {-1, 0}:
         outputs = [x[:all_dims[j],:] for j,x in enumerate(output_list)]
@@ -505,18 +506,18 @@ def run_ddp(
         if RANK in {-1, 0}: print('\nGATHER: targets...')
         all_targets = gather_tensors(targets, device)
 
-        ## imgs[0].shape
-        hw = torch.tensor([height, width]).to(device)
-        all_hw = [torch.zeros_like(hw, device=device) for _ in range(WORLD_SIZE)]
-        dist.all_gather(all_hw, hw)
+        # ## imgs[0].shape
+        # hw = torch.tensor([height, width]).to(device)
+        # all_hw = [torch.zeros_like(hw, device=device) for _ in range(WORLD_SIZE)]
+        # dist.all_gather(all_hw, hw)
 
         ## shapes
         all_shapes = []
         for s in shapes:
             t = torch.tensor(s[0] + s[1][0] + s[1][1]).to(device)
-            _shapes = [torch.zeros_like(t, device=device) for _ in range(WORLD_SIZE)]
-            dist.all_gather(_shapes, t)
-            all_shapes.append(_shapes)
+            all_t = [torch.zeros_like(t, device=device) for _ in range(WORLD_SIZE)]
+            dist.all_gather(all_t, t)
+            all_shapes.append(all_t)
 
         if RANK in {-1, 0}:
             # all_preds = torch.cat(all_preds, dim=0)
@@ -544,7 +545,7 @@ def run_ddp(
                 shapes.append(s)
             print(f'\nSHAPES:{shapes}\n\n')
 
-            print(f'\nALL_HW:{all_hw}\n\n')
+            # print(f'\nALL_HW:{all_hw}\n\n')
 
         continue
         ###############################################################
