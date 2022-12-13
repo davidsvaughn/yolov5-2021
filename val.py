@@ -511,10 +511,12 @@ def run_ddp(
         dist.all_gather(all_hw, hw)
 
         ## shapes
-        s = shapes[0]
-        t = torch.tensor(s[0] + s[1][0] + s[1][1]).to(device)
-        all_shapes = [torch.zeros_like(t, device=device) for _ in range(WORLD_SIZE)]
-        dist.all_gather(all_shapes, t)
+        all_shapes = []
+        for s in shapes:
+            t = torch.tensor(s[0] + s[1][0] + s[1][1]).to(device)
+            _shapes = [torch.zeros_like(t, device=device) for _ in range(WORLD_SIZE)]
+            dist.all_gather(_shapes, t)
+            all_shapes.append(_shapes)
 
         if RANK in {-1, 0}:
             # all_preds = torch.cat(all_preds, dim=0)
@@ -526,19 +528,20 @@ def run_ddp(
             print('ALL_PREDS   ')
             [print(f'{p.shape}\n') for p in preds]
 
-            print(f'\nALL_TARGETS (before):{all_targets}\n')
+            # print(f'\nALL_TARGETS (before):{all_targets}\n')
             for j,targets in enumerate(all_targets):
                 targets[:,0] = targets[:,0] * WORLD_SIZE + j ## restore global indices
             targets = torch.cat(all_targets, 0)
-            print(f'\nALL_TARGETS (after):{all_targets}\n\n')
+            print(f'\nTARGETS (after):{targets}\n\n')
+
+            all_shapes = list(itertools.chain.from_iterable(all_shapes))
+            print(f'\nALL_SHAPES:{all_shapes}\n')
 
             shapes = []
             for t in all_shapes:
                 s = list(t.cpu().numpy())
                 s = [[int(s[0]), int(s[1])],[s[2:4],s[4:]]]
                 shapes.append(s)
-
-            print(f'\nALL_SHAPES:{all_shapes}\n')
             print(f'\nSHAPES:{shapes}\n\n')
 
             print(f'\nALL_HW:{all_hw}\n\n')
