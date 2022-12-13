@@ -163,7 +163,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)  # plot_lr_scheduler(optimizer, scheduler, epochs)
 
     # EMA
-    ema = ModelEMA(model) if RANK in {-1, 0} else None
+    ema = ModelEMA(model) # if RANK in {-1, 0} else None
 
     # Resume
     best_fitness, start_epoch = 0.0, 0
@@ -206,7 +206,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     # # Valloader
     # val_batch_size, val_batch_size_ddp = 8, 2
     val_batch_size = val_batch_size_ddp = batch_size // WORLD_SIZE * 2
-    
+
     # val_batch_size = batch_size // WORLD_SIZE
     val_loader_ddp = create_dataloader(val_path,
                                    imgsz,
@@ -413,7 +413,8 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                                             batch_size=val_batch_size_ddp, #batch_size // WORLD_SIZE * 2,
                                             imgsz=imgsz,
                                             half=False, #amp,
-                                            model=de_parallel(model), #ema.ema,
+                                            # model=de_parallel(model), #ema.ema,
+                                            model=ema.ema if ema else de_parallel(model),
                                             single_cls=single_cls,
                                             dataloader=val_loader_ddp,
                                             save_dir=save_dir,
