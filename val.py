@@ -521,27 +521,27 @@ def run_ddp(
             # all_targets = torch.cat(all_targets, dim=0)
             # all_hw = torch.stack(all_hw, dim=0)
             # all_shapes = torch.stack(all_shapes, dim=0)
+            #####
             preds = list(itertools.chain.from_iterable(all_preds))
-
             print('ALL_PREDS   ')
-            # for i,pred in enumerate(preds):
-            #     print(i)
             [print(f'{p.shape}\n') for p in preds]
 
-            print(f'\nALL_TARGETS (before):{all_targets}    ')
-
+            print(f'\nALL_TARGETS (before):{all_targets}\n')
             for j,targets in enumerate(all_targets):
-                # targets[:,0] = j ## restore global indices
                 targets[:,0] = targets[:,0] * WORLD_SIZE + j ## restore global indices
             targets = torch.cat(all_targets, 0)
-
-            print(f'\nALL_TARGETS (after):{all_targets}    ')
+            print(f'\nALL_TARGETS (after):{all_targets}\n\n')
 
             shapes = []
             for t in all_shapes:
                 s = list(t.cpu().numpy())
                 s = [[int(s[0]), int(s[1])],[s[2:4],s[4:]]]
                 shapes.append(s)
+
+            print(f'\nALL_SHAPES:{all_shapes}\n')
+            print(f'\nSHAPES:{shapes}\n\n')
+
+            print(f'\nALL_HW:{all_hw}\n\n')
 
         continue
         ###############################################################
