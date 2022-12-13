@@ -340,14 +340,12 @@ def run(
         maps[c] = ap[i]
     return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, t
 
-def gather_tensors(t, device, dim=6):
+def gather_tensors(t, device):
     shape = torch.tensor(t.shape).to(device)
+    # print(f'RANK:{RANK}-shape:{shape}    ')
     d1,d2 = int(shape[0]), int(shape[1])
-    print(f'RANK:{RANK}-shape:{shape}    ')
-
     out_shapes = [torch.zeros_like(shape, device=device) for _ in range(WORLD_SIZE)]
     dist.all_gather(out_shapes, shape)
-
     all_dims = [int(x[0]) for x in out_shapes]
     max_dim = max(all_dims)
     output_list = [torch.zeros([max_dim, d2], device=device) for _ in range(WORLD_SIZE)]
@@ -498,18 +496,12 @@ def run_ddp(
         ###############################################################
         ## DDP stuff...
         ## gather outputs from all DDP processes...
-        # if batch_size==1: preds = preds[0] ## only works with batch_size==1 (for now...)
         
-        if RANK in {-1, 0}: print('\nGATHER: preds...')
+        # if RANK in {-1, 0}: print('\nGATHER: preds...')
         all_preds = gather_tensor_list(preds, device)
 
-        if RANK in {-1, 0}: print('\nGATHER: targets...')
+        # if RANK in {-1, 0}: print('\nGATHER: targets...')
         all_targets = gather_tensors(targets, device)
-
-        # ## imgs[0].shape
-        # hw = torch.tensor([height, width]).to(device)
-        # all_hw = [torch.zeros_like(hw, device=device) for _ in range(WORLD_SIZE)]
-        # dist.all_gather(all_hw, hw)
 
         ## shapes
         all_shapes = []
@@ -520,34 +512,25 @@ def run_ddp(
             all_shapes.append(all_t)
 
         if RANK in {-1, 0}:
-            # all_preds = torch.cat(all_preds, dim=0)
-            # all_targets = torch.cat(all_targets, dim=0)
-            # all_hw = torch.stack(all_hw, dim=0)
-            # all_shapes = torch.stack(all_shapes, dim=0)
-            #####
             preds = list(itertools.chain.from_iterable(all_preds))
-            print('ALL_PREDS   ')
-            [print(f'{p.shape}\n') for p in preds]
+            # print('ALL_PREDS   '); [print(f'{p.shape}') for p in preds]
 
-            # print(f'\nALL_TARGETS (before):{all_targets}\n')
             for j,targets in enumerate(all_targets):
                 targets[:,0] = targets[:,0] * WORLD_SIZE + j ## restore global indices
             targets = torch.cat(all_targets, 0)
-            print(f'\nTARGETS (after):{targets}\n\n')
+            # print(f'\nTARGETS (after):{targets}\n\n')
 
             all_shapes = list(itertools.chain.from_iterable(all_shapes))
-            print(f'\nALL_SHAPES:{all_shapes}\n')
+            # print(f'\nALL_SHAPES:{all_shapes}\n')
 
             shapes = []
             for t in all_shapes:
                 s = list(t.cpu().numpy())
                 s = [[int(s[0]), int(s[1])],[s[2:4],s[4:]]]
                 shapes.append(s)
-            print(f'\nSHAPES:{shapes}\n\n')
+            # print(f'\nSHAPES:{shapes}\n\n')
 
-            # print(f'\nALL_HW:{all_hw}\n\n')
-
-        continue
+        # continue
         ###############################################################
 
         if RANK in {-1, 0}:
@@ -570,33 +553,35 @@ def run_ddp(
                 if single_cls:
                     pred[:, 5] = 0
                 predn = pred.clone()
-                scale_boxes(im[si].shape[1:], predn[:, :4], shape, shapes[si][1])  # native-space pred
+                # scale_boxes(im[si].shape[1:], predn[:, :4], shape, shapes[si][1])  # native-space pred
+                scale_boxes([height, width], predn[:, :4], shape, shapes[si][1])  # native-space pred
 
                 # Evaluate
                 if nl:
                     tbox = xywh2xyxy(labels[:, 1:5])  # target boxes
-                    scale_boxes(im[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
+                    # scale_boxes(im[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
+                    scale_boxes([height, width], tbox, shape, shapes[si][1])  # native-space labels
                     labelsn = torch.cat((labels[:, 0:1], tbox), 1)  # native-space labels
                     correct = process_batch(predn, labelsn, iouv)
                     if plots:
                         confusion_matrix.process_batch(predn, labelsn)
                 stats.append((correct, pred[:, 4], pred[:, 5], labels[:, 0]))  # (correct, conf, pcls, tcls)
 
-                # Save/log
-                if save_txt:
-                    save_one_txt(predn, save_conf, shape, file=save_dir / 'labels' / f'{path.stem}.txt')
-                if save_json:
-                    save_one_json(predn, jdict, path, class_map)  # append to COCO-JSON dictionary
-                callbacks.run('on_val_image_end', pred, predn, path, names, im[si])
+                # # Save/log
+                # if save_txt:
+                #     save_one_txt(predn, save_conf, shape, file=save_dir / 'labels' / f'{path.stem}.txt')
+                # if save_json:
+                #     save_one_json(predn, jdict, path, class_map)  # append to COCO-JSON dictionary
+                # callbacks.run('on_val_image_end', pred, predn, path, names, im[si])
 
-            # Plot images
-            if plots and batch_i < 3:
-                plot_images(im, targets, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names)  # labels
-                plot_images(im, output_to_target(preds), paths, save_dir / f'val_batch{batch_i}_pred.jpg', names)  # pred
+            # # Plot images
+            # if plots and batch_i < 3:
+            #     plot_images(im, targets, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names)  # labels
+            #     plot_images(im, output_to_target(preds), paths, save_dir / f'val_batch{batch_i}_pred.jpg', names)  # pred
 
-            callbacks.run('on_val_batch_end', batch_i, im, targets, paths, shapes, preds)
+            # callbacks.run('on_val_batch_end', batch_i, im, targets, paths, shapes, preds)
     
-    return None,None,None
+    # return None,None,None
 
     # Compute metrics
     if RANK in {-1, 0}:

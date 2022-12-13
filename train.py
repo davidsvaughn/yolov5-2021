@@ -207,7 +207,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
     val_batch_size_ddp = 1
     val_batch_size_ddp = 2
     # val_batch_size = batch_size // WORLD_SIZE
-    print(f'RANK:{RANK}-val_batch_size_ddp:{val_batch_size_ddp}    ')
+    # print(f'RANK:{RANK}-val_batch_size_ddp:{val_batch_size_ddp}    ')
     val_loader_ddp = create_dataloader(val_path,
                                    imgsz,
                                    val_batch_size_ddp, #batch_size // WORLD_SIZE,
@@ -410,7 +410,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
 
         # DDP Stuff
         # deepcopy(de_parallel(model)).half(),
-        results, maps, _ = validate.run_ddp(data_dict,
+        _results, _maps, _ = validate.run_ddp(data_dict,
                                             batch_size=val_batch_size_ddp, #batch_size // WORLD_SIZE * 2,
                                             imgsz=imgsz,
                                             half=False, #amp,
